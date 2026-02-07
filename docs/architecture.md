@@ -40,8 +40,10 @@ Current default backend (`backends/local`):
 
 - `FileTraceStore`: append-only JSONL (no external services)
 - `InMemoryLexicalIndex`: lightweight lexical retrieval
+- `initializeLocalLearningLoop`: bootstrap index/miner state from stored traces
 
-This gives an out-of-the-box dev experience.
+This gives an out-of-the-box dev experience, including cross-session reuse of
+previous traces.
 
 Optional backends can be added without changing core:
 

@@ -75,6 +75,18 @@ const hits = await loop.retrieve({ text: "cannot find module" });
 console.log(hits[0]);
 ```
 
+To rehydrate retrieval/mining state from persisted local traces at startup:
+
+```ts
+import { initializeLocalLearningLoop } from "@continua-ai/contilore";
+
+const initialized = await initializeLocalLearningLoop({
+  dataDir: ".contilore",
+});
+
+console.log(initialized.bootstrap.eventCount);
+```
+
 ## pi adapter
 
 The pi adapter is intentionally thin and uses a pi-like event API contract.

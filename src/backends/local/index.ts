@@ -1,16 +1,30 @@
 import { join } from "node:path";
-import { LearningLoop } from "../../core/learningLoop.js";
+import {
+  type BootstrapFromStoreResult,
+  LearningLoop,
+} from "../../core/learningLoop.js";
 import { SimpleWrongTurnMiner } from "../../core/miner.js";
 import {
   type ProjectIdentityOverrides,
   resolveProjectIdentity,
 } from "../../core/projectIdentity.js";
+import type { TraceQuery } from "../../core/types.js";
 import { FileTraceStore } from "./fileTraceStore.js";
 import { InMemoryLexicalIndex } from "./lexicalIndex.js";
 
 export interface LocalLoopOptions {
   dataDir?: string;
   projectIdentity?: ProjectIdentityOverrides;
+}
+
+export interface InitializeLocalLearningLoopOptions extends LocalLoopOptions {
+  bootstrapFromStore?: boolean;
+  bootstrapQuery?: TraceQuery;
+}
+
+export interface InitializedLocalLearningLoop {
+  loop: LearningLoop;
+  bootstrap: BootstrapFromStoreResult;
 }
 
 export function createLocalLearningLoop(options: LocalLoopOptions = {}): LearningLoop {
@@ -23,6 +37,28 @@ export function createLocalLearningLoop(options: LocalLoopOptions = {}): Learnin
     index: new InMemoryLexicalIndex(),
     miner: new SimpleWrongTurnMiner(),
   });
+}
+
+export async function initializeLocalLearningLoop(
+  options: InitializeLocalLearningLoopOptions = {},
+): Promise<InitializedLocalLearningLoop> {
+  const loop = createLocalLearningLoop(options);
+
+  if (options.bootstrapFromStore === false) {
+    return {
+      loop,
+      bootstrap: {
+        eventCount: 0,
+        documentCount: 0,
+      },
+    };
+  }
+
+  const bootstrap = await loop.bootstrapFromStore(options.bootstrapQuery ?? {});
+  return {
+    loop,
+    bootstrap,
+  };
 }
 
 export { FileTraceStore };

@@ -11,6 +11,7 @@ import type {
   SearchQuery,
   SearchResult,
   TraceEvent,
+  TraceQuery,
 } from "./types.js";
 
 export interface LearningLoopOptions {
@@ -20,11 +21,21 @@ export interface LearningLoopOptions {
   documentBuilder?: EventDocumentBuilder;
 }
 
+export interface BootstrapFromStoreResult {
+  eventCount: number;
+  documentCount: number;
+}
+
+export interface BootstrapFromStoreOptions {
+  force?: boolean;
+}
+
 export class LearningLoop {
   private readonly store: TraceStore;
   private readonly index: TraceIndex;
   private readonly miner?: TraceMiner;
   private readonly documentBuilder: EventDocumentBuilder;
+  private hasBootstrappedFromStore = false;
 
   constructor(options: LearningLoopOptions) {
     this.store = options.store;
@@ -44,6 +55,41 @@ export class LearningLoop {
     if (this.miner) {
       await this.miner.ingest(event);
     }
+  }
+
+  async bootstrapFromStore(
+    query: TraceQuery = {},
+    options: BootstrapFromStoreOptions = {},
+  ): Promise<BootstrapFromStoreResult> {
+    if (this.hasBootstrappedFromStore && !options.force) {
+      return {
+        eventCount: 0,
+        documentCount: 0,
+      };
+    }
+
+    const events = await this.store.query(query);
+    let documentCount = 0;
+
+    for (const event of events) {
+      const docs = this.documentBuilder.build(event);
+      documentCount += docs.length;
+
+      if (docs.length > 0) {
+        await this.index.upsertMany(docs);
+      }
+
+      if (this.miner) {
+        await this.miner.ingest(event);
+      }
+    }
+
+    this.hasBootstrappedFromStore = true;
+
+    return {
+      eventCount: events.length,
+      documentCount,
+    };
   }
 
   async retrieve(query: SearchQuery): Promise<SearchResult[]> {
