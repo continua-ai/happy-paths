@@ -75,9 +75,16 @@ Future miners should use stronger signals:
 - quality metrics (hit@k, MRR)
 - efficiency rollups (wall time, cost, token proxy)
 
-Quality gates can block regressions before rollout. Future path lifecycle should
-support versioning + canary cohorts so new paths can be validated before broad
-promotion.
+Quality gates can block regressions before rollout.
+
+`src/core/pathLifecycle.ts` now provides a baseline lifecycle schema and helpers
+for version assignment + canary decisions:
+
+- `HappyPathArtifact` / `HappyPathVersion`
+- deterministic canary assignment (`assignPathVersion`)
+- promotion/rollback/hold evaluation (`decideCanaryAction`)
+
+This enables staged rollout of new paths before broad promotion.
 
 ## Why lexical-first
 

@@ -20,6 +20,7 @@
 </p>
 
 <p align="center">
+  <a href="https://happypaths.dev">Website</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/wrong-turn-flow.md">Wrong-turn flow</a> ·
   <a href="docs/metrics.md">Metrics</a> ·
