@@ -66,7 +66,7 @@ Future miners should use stronger signals:
 - eventual success checks (tests/lint/typecheck)
 - cross-session clustering
 
-### 5) Evaluation and quality gating
+### 5) Evaluation, quality gating, and adaptive rollout
 
 `wrongTurnEvaluation` provides end-to-end measurement for:
 
@@ -75,7 +75,9 @@ Future miners should use stronger signals:
 - quality metrics (hit@k, MRR)
 - efficiency rollups (wall time, cost, token proxy)
 
-Quality gates can block regressions before rollout.
+Quality gates can block regressions before rollout. Future path lifecycle should
+support versioning + canary cohorts so new paths can be validated before broad
+promotion.
 
 ## Why lexical-first
 

@@ -19,6 +19,7 @@
 - optional vector backend plugin
 - optional reranker plugin
 - path matcher service (intent + context aware retrieval)
+- path versioning + canary rollouts (cohort/channel scoped)
 - batch/offline mining jobs
 
 ## Phase 3
@@ -30,5 +31,7 @@
 
 ## Phase 4
 
-- additional harness adapters (non-pi)
+- additional harness adapters (non-pi, including Claude/Codex-style runtimes)
+- non-coding workflow support (assistant/ops automation paths)
 - benchmark suite with correctness + efficiency reporting
+- friction hotspot reporting to identify APIization bottlenecks in external services
