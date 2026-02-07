@@ -27,6 +27,10 @@
   <a href="docs/roadmap.md">Roadmap</a>
 </p>
 
+<p align="center">
+  Contributor trust policy: <a href=".github/VOUCHED.td">VOUCHED.td</a>
+</p>
+
 ---
 
 Happy Paths is a trace-driven learning loop for coding agents.

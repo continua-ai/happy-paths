@@ -44,3 +44,11 @@ PRs must pass:
 - typecheck
 - tests
 - source-size guardrails
+
+## Trust policy (Vouch)
+
+This repository uses [mitchellh/vouch](https://github.com/mitchellh/vouch).
+
+- PRs from unvouched users are auto-closed.
+- Maintainers can vouch users via issue comments (for example: `vouch @username`).
+- The trust list is tracked in `.github/VOUCHED.td`.
