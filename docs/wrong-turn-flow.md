@@ -28,8 +28,13 @@ Reported efficiency rollups:
 - `evaluateWrongTurnScenarios(...)`
 - `evaluateSuggestionQualityGate(...)`
 - `buildWrongTurnScenarioFromTemplate(...)`
+- `buildScenarioBatchFromDataset(...)`
+- `evaluateWrongTurnDataset(...)`
 
-See `src/core/wrongTurnEvaluation.ts`.
+See:
+
+- `src/core/wrongTurnEvaluation.ts`
+- `src/core/wrongTurnDataset.ts`
 
 ## Example
 
@@ -45,3 +50,10 @@ Example gate:
 
 - min hit@3: `0.7`
 - min MRR: `0.5`
+
+A canonical fixture for CI lives at `testdata/wrong_turn_dataset.json`, and can
+be validated with:
+
+```bash
+npm run test:wrong-turn-gate
+```

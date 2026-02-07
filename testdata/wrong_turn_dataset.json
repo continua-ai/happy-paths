@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "qualityGate": {
+    "minHitAt1Rate": 0,
+    "minHitAt3Rate": 1,
+    "minMeanReciprocalRank": 0.3
+  },
+  "scenarios": [
+    {
+      "id": "missing-module",
+      "description": "Use --runInBand after repeated module resolution failures.",
+      "query": {
+        "text": "npm run test error cannot find module",
+        "limit": 8
+      },
+      "expectedPhrases": ["runinband"],
+      "captureEvents": [
+        {
+          "harness": "pi",
+          "scope": "personal",
+          "type": "tool_result",
+          "payload": {
+            "command": "npm run test",
+            "output": "Error: Cannot find module x",
+            "isError": true
+          },
+          "metrics": {
+            "outcome": "failure",
+            "latencyMs": 220,
+            "tokens": {
+              "inputUncached": 120,
+              "output": 40
+            },
+            "cost": {
+              "usd": 0.08
+            }
+          }
+        },
+        {
+          "harness": "pi",
+          "scope": "personal",
+          "type": "tool_result",
+          "payload": {
+            "command": "npm run test -- --runInBand",
+            "output": "PASS",
+            "isError": false
+          },
+          "metrics": {
+            "outcome": "success",
+            "latencyMs": 120,
+            "tokens": {
+              "inputUncached": 80,
+              "output": 20
+            },
+            "cost": {
+              "usd": 0.04
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "permission-denied",
+      "description": "Use chmod after permission denied on executable.",
+      "query": {
+        "text": "permission denied eslint binary",
+        "limit": 8
+      },
+      "expectedPhrases": ["chmod"],
+      "captureEvents": [
+        {
+          "harness": "pi",
+          "scope": "personal",
+          "type": "tool_result",
+          "payload": {
+            "command": "npx eslint src",
+            "output": "sh: eslint: Permission denied",
+            "isError": true
+          },
+          "metrics": {
+            "outcome": "failure",
+            "latencyMs": 180,
+            "tokens": {
+              "inputUncached": 90,
+              "output": 30
+            },
+            "cost": {
+              "usd": 0.06
+            }
+          }
+        },
+        {
+          "harness": "pi",
+          "scope": "personal",
+          "type": "tool_result",
+          "payload": {
+            "command": "chmod +x node_modules/.bin/eslint && npx eslint src",
+            "output": "eslint complete",
+            "isError": false
+          },
+          "metrics": {
+            "outcome": "success",
+            "latencyMs": 90,
+            "tokens": {
+              "inputUncached": 60,
+              "output": 10
+            },
+            "cost": {
+              "usd": 0.03
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

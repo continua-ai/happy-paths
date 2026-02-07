@@ -126,6 +126,14 @@ const report = await evaluateWrongTurnScenarios([scenario], () => {
 
 See `examples/wrong-turn-evaluation.ts`.
 
+A dataset-driven gate is also included (`testdata/wrong_turn_dataset.json`):
+
+```bash
+npm run test:wrong-turn-gate
+```
+
+This provides a CI-friendly quality floor for hit@k and MRR.
+
 ## Architecture docs
 
 - `docs/architecture.md`
