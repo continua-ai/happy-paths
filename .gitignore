@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 .tmp/
+.contilore/
 .continua-loop/
 .DS_Store
 *.log

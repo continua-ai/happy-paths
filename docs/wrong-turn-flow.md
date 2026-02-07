@@ -56,4 +56,5 @@ be validated with:
 
 ```bash
 npm run test:wrong-turn-gate
+npm run eval:wrong-turn
 ```

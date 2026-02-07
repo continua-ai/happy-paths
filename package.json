@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:wrong-turn-gate": "vitest run tests/wrong-turn-dataset.test.ts",
+    "eval:wrong-turn": "npm run build && node scripts/run-wrong-turn-eval.mjs --strict",
     "typecheck": "tsc --noEmit",
     "verify": "npm run lint && npm run typecheck && npm run test",
     "verify:ci": "npm run verify && npm run guardrails"

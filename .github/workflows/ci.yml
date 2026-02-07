@@ -30,6 +30,9 @@ jobs:
       - name: Lint, typecheck, and test
         run: npm run verify
 
+      - name: Run wrong-turn dataset quality gate
+        run: npm run eval:wrong-turn
+
       - name: Run source-size guardrails
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then

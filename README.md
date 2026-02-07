@@ -143,7 +143,11 @@ This provides a CI-friendly quality floor for hit@k and MRR.
 
 ## CI and guardrails
 
-CI runs lint, typecheck, tests, and source-file-size guardrails from day one.
+CI runs:
+
+- lint + typecheck + tests
+- wrong-turn dataset quality gate (`npm run eval:wrong-turn`)
+- source-file-size guardrails
 
 ## License
 
