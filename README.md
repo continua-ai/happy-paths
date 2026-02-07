@@ -32,6 +32,7 @@ Early scaffold / MVP foundations:
 - normalized trace schema
 - local JSONL trace store
 - in-memory lexical index
+- optional composite index (lexical + semantic fusion)
 - basic wrong-turn miner
 - pi adapter hook layer
 - metrics helpers (correctness + wall time + cost + token proxy)

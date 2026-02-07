@@ -52,6 +52,9 @@ Optional backends can be added without changing core:
 - Vector databases
 - rerankers
 
+`CompositeTraceIndex` can combine a lexical-first primary index with an optional
+secondary semantic index using reciprocal rank fusion.
+
 ### 4) Mining
 
 Current miner (`SimpleWrongTurnMiner`) finds basic wrong-turn -> correction arcs.
