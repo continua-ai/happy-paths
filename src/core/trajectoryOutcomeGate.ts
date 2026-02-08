@@ -202,23 +202,41 @@ const DEFAULT_TRUST_OPTIONS: Required<TrajectoryOutcomeTrustOptions> = {
   seed: 31,
 };
 
-const PROBE_COMMAND_PATTERN =
-  /\b(curl|wget|http|fetch|rg|ripgrep|grep|find|ls|stat|test)\b/i;
+const PROBE_COMMAND_PREFIXES = new Set([
+  "curl",
+  "wget",
+  "http",
+  "fetch",
+  "rg",
+  "ripgrep",
+  "grep",
+]);
 
 const PROBE_FAILURE_PATTERN =
-  /(\b404\b|not found|no matches? found|no result|cannot access .*no such file or directory|does not exist|command exited with code 1)/i;
+  /(\b404\b|not found|no matches? found|no result|does not exist|command exited with code 1)/i;
 
 const TRANSIENT_EXTERNAL_PATTERN =
   /(timed out|timeout|connection reset|connection refused|temporarily unavailable|rate limit|429\b|\b50[234]\b|network is unreachable|tls handshake timeout|upstream)/i;
 
+const TRANSIENT_TRACEBACK_PATTERN = /traceback \(most recent call last\):/i;
+
+const TRANSIENT_TRACEBACK_COMMAND_PATTERN =
+  /(generate_vertex_image\.py|vertex|post_linear_comment\.py|scripts\/search\.py|scripts\/content\.py|uploads\.linear\.app|api\.linear\.app)/i;
+
 const COMMAND_MISMATCH_PATTERN =
-  /(unknown option|unrecognized option|invalid option|invalid argument|usage:\s|did you mean .*--)/i;
+  /(unknown option|unrecognized option|invalid option|invalid argument|usage:\s|did you mean .*--|without specifying a condition to a policy containing conditions is prohibited|run the command again with .*--condition)/i;
 
 const ENVIRONMENT_MISMATCH_PATTERN =
-  /(permission denied|command not found|executable file not found|cannot find module|module not found|no such file or directory|missing dependency|denied by policy)/i;
+  /(permission denied|command not found|executable file not found|cannot find module|module not found|no such file or directory|missing dependency|denied by policy|externally-managed-environment)/i;
 
 const MISSING_CONTEXT_PATTERN =
-  /(undefined variable|is not defined|cannot read properties of undefined|null pointer|keyerror|attributeerror|typeerror)/i;
+  /(undefined variable|is not defined|cannot read properties of undefined|null pointer|keyerror|attributeerror|typeerror|base branch policy prohibits the merge|could not resolve to a repository|host_mismatch|ownership_missing|provided domain does not appear to be verified|find: .*no such file or directory|ls: .*no such file or directory|permission denied for table)/i;
+
+const MISSING_CONTEXT_AUTH_FAILURE_PATTERN =
+  /(http\s*40[13]\b|forbidden|unauthorized|api post .* failed: http\s*400\b)/i;
+
+const MISSING_CONTEXT_AUTH_COMMAND_PATTERN =
+  /(search_console_report\.py|searchconsole\.googleapis\.com|firebase_hosting_deploy\.py|firebasehosting\.googleapis\.com|gcloud\s+projects\s+add-iam-policy-binding|gcloud\s+beta\s+run\s+domain-mappings\s+create|gh\s+repo\s+view|gh\s+pr\s+merge)/i;
 
 function normalizeThresholds(
   thresholds?: TrajectoryOutcomeThresholds,
@@ -384,7 +402,29 @@ function asClassifiedIssue(
 }
 
 function isLikelyProbeCommand(command: string): boolean {
-  return PROBE_COMMAND_PATTERN.test(command);
+  const rawCommand = command.trim().toLowerCase();
+  if (!rawCommand) {
+    return false;
+  }
+
+  if (/&&|\|\||;/.test(rawCommand)) {
+    return false;
+  }
+
+  const firstToken = rawCommand.split(/\s+/, 1)[0] ?? "";
+  if (!PROBE_COMMAND_PREFIXES.has(firstToken)) {
+    return false;
+  }
+
+  if (
+    /\b(playwright|preview|build|deploy|merge|add-iam-policy-binding|domain-mappings)\b/i.test(
+      rawCommand,
+    )
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function isLikelyProbeFailure(command: string, output: string): boolean {
@@ -392,7 +432,27 @@ function isLikelyProbeFailure(command: string, output: string): boolean {
     return false;
   }
 
+  if (!output.trim() || output.trim() === "(no output)") {
+    return true;
+  }
+
   return PROBE_FAILURE_PATTERN.test(output);
+}
+
+function isLikelyTransientTraceback(command: string, output: string): boolean {
+  if (!TRANSIENT_TRACEBACK_PATTERN.test(output)) {
+    return false;
+  }
+
+  return TRANSIENT_TRACEBACK_COMMAND_PATTERN.test(command);
+}
+
+function isLikelyContextPermissionFailure(command: string, output: string): boolean {
+  if (!MISSING_CONTEXT_AUTH_FAILURE_PATTERN.test(output)) {
+    return false;
+  }
+
+  return MISSING_CONTEXT_AUTH_COMMAND_PATTERN.test(command);
 }
 
 export function classifyTrajectoryIssue(event: TraceEvent): TrajectoryIssue | null {
@@ -404,9 +464,12 @@ export function classifyTrajectoryIssue(event: TraceEvent): TrajectoryIssue | nu
   const output = textFromPayload(event);
   const normalizedCommand = normalizeText(command);
   const normalizedOutput = normalizeText(output);
-  const combined = `${normalizedCommand}\n${normalizedOutput}`;
+  const normalizedCombined = `${normalizedCommand}\n${normalizedOutput}`;
 
-  if (TRANSIENT_EXTERNAL_PATTERN.test(combined)) {
+  if (
+    TRANSIENT_EXTERNAL_PATTERN.test(normalizedCombined) ||
+    isLikelyTransientTraceback(command, output)
+  ) {
     return asClassifiedIssue(
       event,
       "transient_external",
@@ -416,7 +479,7 @@ export function classifyTrajectoryIssue(event: TraceEvent): TrajectoryIssue | nu
     );
   }
 
-  if (isLikelyProbeFailure(normalizedCommand, normalizedOutput)) {
+  if (isLikelyProbeFailure(command, output)) {
     return asClassifiedIssue(
       event,
       "benign_probe",
@@ -426,7 +489,7 @@ export function classifyTrajectoryIssue(event: TraceEvent): TrajectoryIssue | nu
     );
   }
 
-  if (COMMAND_MISMATCH_PATTERN.test(combined)) {
+  if (COMMAND_MISMATCH_PATTERN.test(normalizedCombined)) {
     return asClassifiedIssue(
       event,
       "command_mismatch",
@@ -436,23 +499,26 @@ export function classifyTrajectoryIssue(event: TraceEvent): TrajectoryIssue | nu
     );
   }
 
-  if (ENVIRONMENT_MISMATCH_PATTERN.test(combined)) {
-    return asClassifiedIssue(
-      event,
-      "environment_mismatch",
-      true,
-      0.86,
-      "Environment/dependency mismatch likely avoidable with recovered fix path.",
-    );
-  }
-
-  if (MISSING_CONTEXT_PATTERN.test(combined)) {
+  if (
+    MISSING_CONTEXT_PATTERN.test(normalizedCombined) ||
+    isLikelyContextPermissionFailure(command, output)
+  ) {
     return asClassifiedIssue(
       event,
       "missing_context",
       true,
       0.78,
       "Likely missing context/state for this step.",
+    );
+  }
+
+  if (ENVIRONMENT_MISMATCH_PATTERN.test(normalizedCombined)) {
+    return asClassifiedIssue(
+      event,
+      "environment_mismatch",
+      true,
+      0.86,
+      "Environment/dependency mismatch likely avoidable with recovered fix path.",
     );
   }
 
