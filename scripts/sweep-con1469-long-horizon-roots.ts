@@ -472,6 +472,9 @@ function scoreResult(
   const familyDisjointPairs =
     trajectory.laneReports?.family_disjoint_eval?.aggregate.totalPairs ?? 0;
   const disjointPairPenalty = familyDisjointPairs < minFamilyDisjointPairCount ? -2 : 0;
+  const lowObservedPairPenalty = observedPairs < 10 ? -1.5 : 0;
+  const lowTrajectoryPairPenalty = trajectoryPairs < 10 ? -1.5 : 0;
+  const zeroSignalPenalty = observedPairs === 0 && trajectoryPairs === 0 ? -3 : 0;
 
   return (
     observed.aggregate.relativeWallTimeReduction * 2 +
@@ -483,7 +486,10 @@ function scoreResult(
     trajectory.aggregate.judgeableCoverageOn * 1 +
     Math.min(observedPairs, 500) / 500 +
     Math.min(trajectoryPairs, 200) / 200 +
-    disjointPairPenalty
+    disjointPairPenalty +
+    lowObservedPairPenalty +
+    lowTrajectoryPairPenalty +
+    zeroSignalPenalty
   );
 }
 
