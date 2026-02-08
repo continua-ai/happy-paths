@@ -15,15 +15,19 @@
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
     "format": "biome format --write .",
-    "guardrails": "node scripts/check-large-source-files.mjs",
+    "guardrails": "tsx scripts/check-large-source-files.ts",
     "lint": "biome check .",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:wrong-turn-gate": "vitest run tests/wrong-turn-dataset.test.ts",
-    "eval:wrong-turn": "tsc -p tsconfig.build.json && node scripts/run-wrong-turn-eval.mjs --strict",
+    "eval:wrong-turn": "tsc -p tsconfig.build.json && tsx scripts/run-wrong-turn-eval.ts --strict",
+    "eval:feasibility": "tsc -p tsconfig.build.json && tsx scripts/run-feasibility-gate.ts --strict",
+    "build:feasibility-dataset": "tsc -p tsconfig.build.json && tsx scripts/build-feasibility-dataset-from-traces.ts",
+    "memo:feasibility": "tsc -p tsconfig.build.json && tsx scripts/write-feasibility-memo.ts",
+    "sync:evidence-web": "tsx scripts/publish-feasibility-evidence.ts",
     "typecheck": "tsc --noEmit",
     "verify": "biome check . && tsc --noEmit && vitest run",
-    "verify:ci": "biome check . && tsc --noEmit && vitest run && node scripts/check-large-source-files.mjs"
+    "verify:ci": "biome check . && tsc --noEmit && vitest run && tsx scripts/check-large-source-files.ts"
   },
   "repository": {
     "type": "git",
@@ -37,6 +41,7 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^24.3.0",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }

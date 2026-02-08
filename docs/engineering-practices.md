@@ -5,7 +5,7 @@
 - Keep source files small and focused.
   - Warning threshold: 1200 LOC
   - Failure threshold: 2000 LOC
-- Use `scripts/check-large-source-files.mjs` in CI.
+- Use `scripts/check-large-source-files.ts` in CI.
 - Add allowlist exceptions only for generated files and document why.
 
 ## Performance defaults
