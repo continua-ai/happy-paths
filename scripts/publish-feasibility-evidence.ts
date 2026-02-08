@@ -35,12 +35,6 @@ type RunManifestExperimentPlan = {
   steps: RunManifestExperimentStep[];
 };
 
-type RunManifestBigIdea = {
-  id: string;
-  title: string;
-  detail: string;
-};
-
 type RunManifestRun = {
   id: string;
   label: string;
@@ -56,7 +50,6 @@ type RunManifest = {
   thresholds: RunManifestThresholds;
   definitions: RunManifestDefinition[];
   experimentPlan: RunManifestExperimentPlan;
-  bigIdeas: RunManifestBigIdea[];
   runs: RunManifestRun[];
 };
 
@@ -221,6 +214,18 @@ function buildDefinitions(thresholds: RunManifestThresholds): RunManifestDefinit
         "Ingest the scenario’s failure→recovery trace first, then suggest. This measures learned reuse.",
     },
     {
+      id: "fixture",
+      title: "Fixture dataset",
+      detail:
+        "A small canonical synthetic scenario set used for repeatable baseline checks. Fixtures are safe to publish.",
+    },
+    {
+      id: "table-arrow",
+      title: "Down-arrow columns (↓)",
+      detail:
+        "Columns labeled with ↓ are relative reductions versus OFF baseline. Bigger percentages are better.",
+    },
+    {
       id: "hit-at-1",
       title: "hit@1",
       detail:
@@ -244,6 +249,12 @@ function buildDefinitions(thresholds: RunManifestThresholds): RunManifestDefinit
       detail: `Computed as (off - on) / off over repeated-dead-end rate. Gate threshold: >= ${thresholds.minDeadEndReduction.toFixed(2)}.`,
     },
     {
+      id: "dead-end-count-estimate",
+      title: "Estimated repeated dead-end count",
+      detail:
+        "Estimated as repeatedDeadEndRate × scenarioCount, shown as OFF → ON and avoided counts.",
+    },
+    {
       id: "wall-time-reduction",
       title: "Relative wall-time proxy reduction",
       detail: `Computed as (off - on) / off over wall-time proxy. Gate threshold: >= ${thresholds.minWallTimeReduction.toFixed(2)}.`,
@@ -263,29 +274,6 @@ function buildDefinitions(thresholds: RunManifestThresholds): RunManifestDefinit
       title: "Assist factor model",
       detail:
         "Conservative proxy for expected gain from retrieval rank: rank1=1.0, rank2=0.6, rank3=0.35, otherwise 0.0.",
-    },
-  ];
-}
-
-function buildBigIdeas(): RunManifestBigIdea[] {
-  return [
-    {
-      id: "prediction-is-compression",
-      title: "Prediction is compression",
-      detail:
-        "If a system can reliably predict likely next failures and recoveries, it can encode execution history in fewer bits and spend fewer future tokens to reach the same outcome.",
-    },
-    {
-      id: "proactive-lookahead",
-      title: "Batchactive-style proactive lookahead",
-      detail:
-        "Borrowing from batchactive scheduling: agents can speculatively evaluate a few likely next branches so candidate recoveries are ready when the user asks.",
-    },
-    {
-      id: "correctness-first-speed",
-      title: "Correctness-first acceleration",
-      detail:
-        "Speed/cost wins only count when recovery success stays high and regressions stay bounded by explicit thresholds.",
     },
   ];
 }
@@ -470,7 +458,6 @@ async function main(): Promise<void> {
     thresholds: THRESHOLDS,
     definitions: buildDefinitions(THRESHOLDS),
     experimentPlan: buildExperimentPlan(experimentSteps),
-    bigIdeas: buildBigIdeas(),
     runs,
   };
 
