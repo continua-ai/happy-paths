@@ -1,11 +1,11 @@
-# 🦝 Happy Paths
+# 🤸‍♀️ Happy Paths
 
 <p align="center">
-  <img src="assets/brand/happy-paths-mascot-ring-purple.png" alt="Happy Paths mascot logo" width="220" />
+  <img src="assets/brand/jumping-girl-mark.svg" alt="Happy Paths jumping girl mark" width="220" />
 </p>
 
 <p align="center">
-  <strong>The one weird trick your costly LLM provider wishes you didn't know:</strong><br/>
+  <strong>One cool trick the costly LLM providers do not want you to know:</strong><br/>
   stop paying repeatedly for the same wrong turns.
 </p>
 
@@ -33,24 +33,25 @@
 
 ---
 
-Happy Paths is a trace-driven learning loop for coding agents.
+I built Happy Paths as a trace-driven learning loop for agentic coding.
 
-It captures agent traces, indexes them quickly, mines wrong-turn corrections,
-and feeds high-confidence guidance back into future runs.
+I capture agent traces, index them quickly, mine wrong-turn corrections, and
+turn those recoveries into reusable recovery skills that feed back into future
+runs.
 
 ## Why this exists
 
-Pi (and other extensible coding harnesses) lets you improve your process by
-adding skills, extensions, and tooling.
+I use Pi (and other extensible coding harnesses) because they let me improve
+my process with skills, extensions, and tooling.
 
-That is powerful — but **figuring out when and how to extend your harness is
+That is powerful — but **figuring out when and how to extend the harness is
 itself expensive and noisy**.
 
-Happy Paths automates that learning loop:
+I built Happy Paths to automate that learning loop:
 
 - detect repeated wrong turns,
 - find corrections that worked,
-- propose reusable playbooks/skills,
+- propose reusable recovery skills/playbooks,
 - improve future runs automatically.
 
 ## The story arc
@@ -97,17 +98,20 @@ skills.sh, but with automatic trace-driven extraction and curation).
 ## How Happy Paths works
 
 1. **Capture**
-   - Normalize agent/tool events into `TraceEvent`.
+   - I normalize agent/tool events into `TraceEvent`.
 2. **Index**
-   - Build lexical documents/signatures immediately.
-   - Optionally combine lexical + semantic indexes via fusion.
+   - I build lexical documents/signatures immediately.
+   - I can optionally combine lexical + semantic indexes via fusion.
 3. **Mine**
-   - Detect wrong-turn -> correction arcs.
+   - I detect wrong-turn -> correction arcs.
 4. **Augment**
-   - Surface suggestions before/while agents run.
-   - Promote high-confidence patterns into reusable skills/playbooks.
+   - I surface suggestions before/while agents run.
+   - I promote high-confidence patterns into reusable recovery skills and
+     playbooks for agentic coding.
 
 ## What exists now (on `main`)
+
+Today I ship:
 
 - normalized trace schema + core interfaces
 - local JSONL trace store
@@ -229,29 +233,10 @@ We intend to support hosted, opt-in sharing:
 
 ## Icon and shorthand
 
-Working mascot: raccoon + loop ring.
+Primary mark: jumping girl.
 
-- image variants: `assets/brand/`
-- unicode shorthand (temporary): `🦝◌`
-
-### Brand concept variants
-
-<table>
-  <tbody>
-    <tr>
-      <td align="center"><strong>Primary Happy Paths mark</strong></td>
-      <td align="center"><strong>Continua-inspired variant</strong></td>
-    </tr>
-    <tr>
-      <td><img src="assets/brand/happy-paths-mascot-ring-purple.png" alt="Primary Happy Paths mark" width="180" /></td>
-      <td><img src="assets/brand/happy-paths-continua-peek.png" alt="Continua-inspired Happy Paths variant" width="180" /></td>
-    </tr>
-  </tbody>
-</table>
-
-## Brand notes
-
-See `docs/brand-guidelines.md` for current logo/asset variants.
+- primary mark: `assets/brand/jumping-girl-mark.svg`
+- unicode shorthand: `🤸‍♀️`
 
 ## Credits
 

@@ -1,14 +1,10 @@
 # Asset notes
 
-This directory contains draft branding and storytelling visuals used in the
-README.
+This directory contains lightweight branding and storytelling visuals used in
+the README.
 
-- `brand/`: logo/mascot explorations (preferred: `happy-paths-mascot-ring-purple.png`)
-- `marketing/`: concept illustrations for product narrative
+- `brand/`: current mark(s), including `jumping-girl-mark.svg`
+- `marketing/`: concept illustrations for the product narrative
 
-Most PNGs were generated as concept art via Vertex AI image generation
-(`gemini-2.5-flash-image`) using prompts focused on purple/indigo flat-vector
-style.
-
-These are draft assets for OSS presentation and may be replaced by hand-crafted
-designs later.
+The brand direction is intentionally simple: a jumping-girl motif for "leaping"
+out of repeated wrong turns.
