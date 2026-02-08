@@ -19,6 +19,7 @@ type Options = {
   longHorizonTraceRoot: string;
   longHorizonFormat: TraceInputFormat;
   longHorizonToolName: string;
+  minFamilyDisjointPairCount: number;
 };
 
 type FeasibilityRun = {
@@ -93,6 +94,7 @@ type LoopSummary = {
     traceRoot: string;
     format: TraceInputFormat;
     toolName: string;
+    minFamilyDisjointPairCount: number;
   };
   feasibility: {
     generatedAtUtc: string;
@@ -125,6 +127,7 @@ type LoopSummary = {
     failures: string[];
     fullEvalPairCount: number | null;
     familyDisjointPairCount: number | null;
+    familyDisjointPairFloorPass: boolean;
   };
   reportPaths: {
     feasibilityPublic: string;
@@ -187,6 +190,7 @@ function parseArgs(argv: string[]): Options {
     longHorizonTraceRoot: ".happy-paths",
     longHorizonFormat: "trace",
     longHorizonToolName: "bash",
+    minFamilyDisjointPairCount: 20,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -220,6 +224,17 @@ function parseArgs(argv: string[]): Options {
     }
     if (token === "--long-horizon-tool-name") {
       options.longHorizonToolName = String(value);
+      index += 1;
+      continue;
+    }
+    if (token === "--min-family-disjoint-pair-count") {
+      const parsed = Number.parseInt(String(value), 10);
+      if (!Number.isFinite(parsed)) {
+        throw new Error(
+          `invalid --min-family-disjoint-pair-count value: ${String(value)}`,
+        );
+      }
+      options.minFamilyDisjointPairCount = Math.max(0, parsed);
       index += 1;
       continue;
     }
@@ -452,6 +467,7 @@ function buildMarkdown(summary: LoopSummary): string {
     `- generatedAtUtc: ${formatUtcWithEastern(summary.generatedAtUtc)}`,
     `- long-horizon trace root: ${summary.longHorizonInput.traceRoot}`,
     `- long-horizon format/tool: ${summary.longHorizonInput.format} / ${summary.longHorizonInput.toolName}`,
+    `- family-disjoint pair floor: >= ${summary.longHorizonInput.minFamilyDisjointPairCount}`,
     "",
     "Feasibility",
     `- generatedAtUtc: ${formatUtcWithEastern(summary.feasibility.generatedAtUtc)}`,
@@ -473,6 +489,7 @@ function buildMarkdown(summary: LoopSummary): string {
     `- generatedAtUtc: ${formatUtcWithEastern(summary.trajectoryOutcome.generatedAtUtc)}`,
     `- primary lane: ${summary.trajectoryOutcome.primaryLane}`,
     `- pairs (primary/full/disjoint): ${summary.trajectoryOutcome.pairCount} / ${summary.trajectoryOutcome.fullEvalPairCount ?? 0} / ${summary.trajectoryOutcome.familyDisjointPairCount ?? 0}`,
+    `- disjoint pair floor pass: ${summary.trajectoryOutcome.familyDisjointPairFloorPass}`,
     `- gate pass: ${summary.trajectoryOutcome.gatePass}`,
     `- harmful-retry / wall-time / token reductions: ${summary.trajectoryOutcome.harmfulRetryReduction.toFixed(3)} / ${summary.trajectoryOutcome.wallTimeReduction.toFixed(3)} / ${summary.trajectoryOutcome.tokenCountReduction.toFixed(3)}`,
     `- judgeable coverage on: ${summary.trajectoryOutcome.judgeableCoverageOn.toFixed(3)}`,
@@ -539,6 +556,9 @@ function collectSummary(
       failures: trajectory.gateResult.failures,
       fullEvalPairCount: fullLane?.aggregate.totalPairs ?? null,
       familyDisjointPairCount: familyDisjointLane?.aggregate.totalPairs ?? null,
+      familyDisjointPairFloorPass:
+        (familyDisjointLane?.aggregate.totalPairs ?? 0) >=
+        longHorizonInput.minFamilyDisjointPairCount,
     },
     reportPaths,
   };
@@ -573,6 +593,8 @@ async function main(): Promise<void> {
         options.longHorizonFormat,
         "--long-horizon-tool-name",
         options.longHorizonToolName,
+        "--min-family-disjoint-pair-count",
+        String(options.minFamilyDisjointPairCount),
       ],
       commandsRun,
     );
@@ -610,6 +632,7 @@ async function main(): Promise<void> {
       traceRoot: options.longHorizonTraceRoot,
       format: options.longHorizonFormat,
       toolName: options.longHorizonToolName,
+      minFamilyDisjointPairCount: options.minFamilyDisjointPairCount,
     },
   );
   summary.mode = options.mode;

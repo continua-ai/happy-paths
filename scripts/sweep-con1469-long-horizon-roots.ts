@@ -22,6 +22,7 @@ type Options = {
   minTotalLatencyMs: number;
   minToolResultCount: number;
   evalRatio: number;
+  minFamilyDisjointPairCount: number;
 };
 
 type ObservedReport = {
@@ -84,6 +85,7 @@ type CandidateResult = {
     failures: string[];
     fullEvalPairCount: number | null;
     familyDisjointPairCount: number | null;
+    familyDisjointPairFloorPass: boolean;
   };
   score: number;
 };
@@ -95,6 +97,7 @@ type SweepSummary = {
     minTotalLatencyMs: number;
     minToolResultCount: number;
     evalRatio: number;
+    minFamilyDisjointPairCount: number;
   };
   results: CandidateResult[];
   bestByScore: CandidateResult | null;
@@ -153,6 +156,7 @@ function parseArgs(argv: string[]): Options {
     minTotalLatencyMs: 0,
     minToolResultCount: 2,
     evalRatio: 0.3,
+    minFamilyDisjointPairCount: 20,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -192,6 +196,19 @@ function parseArgs(argv: string[]): Options {
     if (token === "--eval-ratio") {
       options.evalRatio = parseNumber(String(value), token);
       index += 1;
+      continue;
+    }
+    if (token === "--min-family-disjoint-pair-count") {
+      options.minFamilyDisjointPairCount = Math.max(
+        0,
+        Number.parseInt(String(value), 10),
+      );
+      if (!Number.isFinite(options.minFamilyDisjointPairCount)) {
+        throw new Error(
+          `invalid --min-family-disjoint-pair-count value: ${String(value)}`,
+        );
+      }
+      index += 1;
     }
   }
 
@@ -224,9 +241,16 @@ async function readJsonFile<T>(filePath: string): Promise<T> {
   return JSON.parse(raw) as T;
 }
 
-function scoreResult(observed: ObservedReport, trajectory: TrajectoryReport): number {
+function scoreResult(
+  observed: ObservedReport,
+  trajectory: TrajectoryReport,
+  minFamilyDisjointPairCount: number,
+): number {
   const observedPairs = observed.aggregate.totalPairs;
   const trajectoryPairs = trajectory.aggregate.totalPairs;
+  const familyDisjointPairs =
+    trajectory.laneReports?.family_disjoint_eval?.aggregate.totalPairs ?? 0;
+  const disjointPairPenalty = familyDisjointPairs < minFamilyDisjointPairCount ? -2 : 0;
 
   return (
     observed.aggregate.relativeWallTimeReduction * 2 +
@@ -237,7 +261,8 @@ function scoreResult(observed: ObservedReport, trajectory: TrajectoryReport): nu
     trajectory.aggregate.relativeTokenCountReduction * 1.5 +
     trajectory.aggregate.judgeableCoverageOn * 1 +
     Math.min(observedPairs, 500) / 500 +
-    Math.min(trajectoryPairs, 200) / 200
+    Math.min(trajectoryPairs, 200) / 200 +
+    disjointPairPenalty
   );
 }
 
@@ -294,7 +319,7 @@ function toMarkdown(summary: SweepSummary): string {
   lines.push("");
   lines.push(`- generatedAtUtc: ${formatUtcWithEastern(summary.generatedAtUtc)}`);
   lines.push(
-    `- params: minSessionDurationMs=${summary.options.minSessionDurationMs}, minTotalLatencyMs=${summary.options.minTotalLatencyMs}, minToolResultCount=${summary.options.minToolResultCount}, evalRatio=${summary.options.evalRatio}`,
+    `- params: minSessionDurationMs=${summary.options.minSessionDurationMs}, minTotalLatencyMs=${summary.options.minTotalLatencyMs}, minToolResultCount=${summary.options.minToolResultCount}, evalRatio=${summary.options.evalRatio}, minFamilyDisjointPairCount=${summary.options.minFamilyDisjointPairCount}`,
   );
   if (summary.bestByScore) {
     lines.push(
@@ -313,7 +338,7 @@ function toMarkdown(summary: SweepSummary): string {
       `- observed: pairs=${result.observed.pairCount}, gate=${result.observed.gatePass}, dead/wall/token=${result.observed.deadEndReduction.toFixed(3)}/${result.observed.wallTimeReduction.toFixed(3)}/${result.observed.tokenCountReduction.toFixed(3)}`,
     );
     lines.push(
-      `- trajectory: lane=${result.trajectory.primaryLane}, pairs(primary/full/disjoint)=${result.trajectory.pairCount}/${result.trajectory.fullEvalPairCount ?? 0}/${result.trajectory.familyDisjointPairCount ?? 0}, gate=${result.trajectory.gatePass}, harmful/wall/token=${result.trajectory.harmfulRetryReduction.toFixed(3)}/${result.trajectory.wallTimeReduction.toFixed(3)}/${result.trajectory.tokenCountReduction.toFixed(3)}, judgeableOn=${result.trajectory.judgeableCoverageOn.toFixed(3)}`,
+      `- trajectory: lane=${result.trajectory.primaryLane}, pairs(primary/full/disjoint)=${result.trajectory.pairCount}/${result.trajectory.fullEvalPairCount ?? 0}/${result.trajectory.familyDisjointPairCount ?? 0}, pairFloorPass=${result.trajectory.familyDisjointPairFloorPass}, gate=${result.trajectory.gatePass}, harmful/wall/token=${result.trajectory.harmfulRetryReduction.toFixed(3)}/${result.trajectory.wallTimeReduction.toFixed(3)}/${result.trajectory.tokenCountReduction.toFixed(3)}, judgeableOn=${result.trajectory.judgeableCoverageOn.toFixed(3)}`,
     );
     if (result.observed.failures.length > 0) {
       lines.push(`- observed failures: ${result.observed.failures.join("; ")}`);
@@ -387,6 +412,8 @@ async function main(): Promise<void> {
       String(options.evalRatio),
       "--primary-lane",
       "family_disjoint_eval",
+      "--min-family-disjoint-pair-count",
+      String(options.minFamilyDisjointPairCount),
       "--out",
       trajectoryOutPath,
     ]);
@@ -420,8 +447,11 @@ async function main(): Promise<void> {
           trajectory.laneReports?.full_eval?.aggregate.totalPairs ?? null,
         familyDisjointPairCount:
           trajectory.laneReports?.family_disjoint_eval?.aggregate.totalPairs ?? null,
+        familyDisjointPairFloorPass:
+          (trajectory.laneReports?.family_disjoint_eval?.aggregate.totalPairs ?? 0) >=
+          options.minFamilyDisjointPairCount,
       },
-      score: scoreResult(observed, trajectory),
+      score: scoreResult(observed, trajectory, options.minFamilyDisjointPairCount),
     };
 
     results.push(result);
@@ -435,6 +465,7 @@ async function main(): Promise<void> {
       minTotalLatencyMs: options.minTotalLatencyMs,
       minToolResultCount: options.minToolResultCount,
       evalRatio: options.evalRatio,
+      minFamilyDisjointPairCount: options.minFamilyDisjointPairCount,
     },
     results,
     bestByScore: results[0] ?? null,

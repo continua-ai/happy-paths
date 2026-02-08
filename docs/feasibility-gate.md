@@ -339,7 +339,8 @@ npm run sync:evidence-web -- \
   --include-pi-session true \
   --long-horizon-trace-root .happy-paths \
   --long-horizon-format trace \
-  --long-horizon-tool-name bash
+  --long-horizon-tool-name bash \
+  --min-family-disjoint-pair-count 20
 ```
 
 This stage is intentionally small and always end-to-end; later stages should
@@ -372,7 +373,8 @@ npm run loop:con1469 -- \
   --mode refresh \
   --long-horizon-trace-root ~/.pi/agent/sessions \
   --long-horizon-format pi \
-  --long-horizon-tool-name bash
+  --long-horizon-tool-name bash \
+  --min-family-disjoint-pair-count 20
 ```
 
 Quick corpus sweep helper (runs observed + trajectory gates across candidates):
@@ -380,7 +382,8 @@ Quick corpus sweep helper (runs observed + trajectory gates across candidates):
 ```bash
 npm run loop:con1469:sweep-roots -- \
   --candidate 'happy-paths|.happy-paths|trace|bash' \
-  --candidate 'pi-sessions|~/.pi/agent/sessions|pi|bash'
+  --candidate 'pi-sessions|~/.pi/agent/sessions|pi|bash' \
+  --min-family-disjoint-pair-count 20
 ```
 
 Optional Linear update (uses `LINEAR_API_KEY`):
@@ -394,4 +397,5 @@ npm run loop:con1469 -- \
 
 The loop + sweep scripts print key gate metrics (feasibility, observed A/B,
 trajectory), including generated-at timestamps, long-horizon corpus selection,
-and command provenance, so agents can ship and report in one pass.
+family-disjoint pair-floor guard status, and command provenance, so agents can
+ship and report in one pass.

@@ -25,6 +25,7 @@ type ParsedOptions = {
   minToolResultCount: number;
   evalRatio: number;
   primaryLane: PrimaryLane;
+  minFamilyDisjointPairCount: number;
   maxOverlapRateByEvalFamilies?: number;
   strictNoFamilyOverlap: boolean;
   strict: boolean;
@@ -123,6 +124,7 @@ function parseArgs(argv: string[]): ParsedOptions {
     minToolResultCount: 8,
     evalRatio: 0.3,
     primaryLane: "family_disjoint_eval",
+    minFamilyDisjointPairCount: 20,
     maxOverlapRateByEvalFamilies: undefined,
     strictNoFamilyOverlap: false,
     strict: false,
@@ -186,6 +188,11 @@ function parseArgs(argv: string[]): ParsedOptions {
     }
     if (token === "--primary-lane") {
       options.primaryLane = parsePrimaryLane(String(value));
+      index += 1;
+      continue;
+    }
+    if (token === "--min-family-disjoint-pair-count") {
+      options.minFamilyDisjointPairCount = Math.max(0, parseIntOrUndefined(value) ?? 0);
       index += 1;
       continue;
     }
@@ -561,15 +568,28 @@ async function main(): Promise<void> {
     options.maxOverlapRateByEvalFamilies === undefined ||
     familyOverlap.overlapRateByEvalFamilies <= options.maxOverlapRateByEvalFamilies;
 
+  const familyDisjointPairCount =
+    laneReports.family_disjoint_eval.report.aggregate.totalPairs;
+  const familyDisjointPairCountPass =
+    familyDisjointPairCount >= options.minFamilyDisjointPairCount;
+
   const gateFailures = [...primaryLaneReport.report.gateResult.failures];
   if (!overlapRatePass && options.maxOverlapRateByEvalFamilies !== undefined) {
     gateFailures.push(
       `family overlap rate ${familyOverlap.overlapRateByEvalFamilies.toFixed(3)} > ${options.maxOverlapRateByEvalFamilies.toFixed(3)}`,
     );
   }
+  if (!familyDisjointPairCountPass) {
+    gateFailures.push(
+      `family-disjoint pair count ${familyDisjointPairCount} < ${options.minFamilyDisjointPairCount}`,
+    );
+  }
 
   const gateResult = {
-    pass: primaryLaneReport.report.gateResult.pass && overlapRatePass,
+    pass:
+      primaryLaneReport.report.gateResult.pass &&
+      overlapRatePass &&
+      familyDisjointPairCountPass,
     failures: gateFailures,
   };
 
@@ -605,6 +625,11 @@ async function main(): Promise<void> {
       overlapRateConstraint: {
         maxOverlapRateByEvalFamilies: options.maxOverlapRateByEvalFamilies,
         pass: overlapRatePass,
+      },
+      familyDisjointPairConstraint: {
+        minFamilyDisjointPairCount: options.minFamilyDisjointPairCount,
+        observedFamilyDisjointPairCount: familyDisjointPairCount,
+        pass: familyDisjointPairCountPass,
       },
     },
     trainEpisodeCount: trainEpisodes.length,
@@ -736,6 +761,14 @@ async function main(): Promise<void> {
         ].join(" "),
       );
     }
+
+    console.log(
+      [
+        "- family-disjoint pair constraint:",
+        `${familyDisjointPairCount} >= ${options.minFamilyDisjointPairCount}`,
+        `(pass=${familyDisjointPairCountPass})`,
+      ].join(" "),
+    );
 
     console.log(`- gate pass: ${gateResult.pass}`);
     if (!gateResult.pass) {
