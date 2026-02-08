@@ -20,6 +20,8 @@ export interface ObservedAbThresholds {
 export interface ObservedAbPairingOptions {
   minOccurrencesPerFamily?: number;
   requireCrossSession?: boolean;
+  maxWallTimeRatio?: number;
+  maxTokenCountRatio?: number;
 }
 
 export interface ObservedAbTrustOptions {
@@ -54,14 +56,17 @@ export interface ObservedAbPair {
   retriesOn: number;
   wallTimeOffMs: number;
   wallTimeOnMs: number;
+  wallTimeRatio: number;
   tokenCountOff: number;
   tokenCountOn: number;
+  tokenCountRatio: number;
   tokenProxyOff: number;
   tokenProxyOn: number;
   costOffUsd: number;
   costOnUsd: number;
   successOff: boolean;
   successOn: boolean;
+  qualityScore: number;
 }
 
 export interface ObservedAbAggregate {
@@ -109,9 +114,19 @@ export interface ObservedAbGateResult {
   failures: string[];
 }
 
+export interface ObservedAbPairingDiagnostics {
+  familiesSeen: number;
+  familiesEligible: number;
+  candidateTransitions: number;
+  droppedSameSession: number;
+  droppedOutlierRatio: number;
+  pairsBuilt: number;
+}
+
 export interface ObservedAbReport {
   thresholds: Required<ObservedAbThresholds>;
   pairing: Required<ObservedAbPairingOptions>;
+  pairingDiagnostics: ObservedAbPairingDiagnostics;
   episodes: ObservedAbEpisode[];
   pairs: ObservedAbPair[];
   aggregate: ObservedAbAggregate;
@@ -132,6 +147,8 @@ const DEFAULT_THRESHOLDS: Required<ObservedAbThresholds> = {
 const DEFAULT_PAIRING: Required<ObservedAbPairingOptions> = {
   minOccurrencesPerFamily: 2,
   requireCrossSession: true,
+  maxWallTimeRatio: 4,
+  maxTokenCountRatio: 4,
 };
 
 const DEFAULT_TRUST_OPTIONS: Required<ObservedAbTrustOptions> = {
@@ -152,9 +169,24 @@ function normalizeThresholds(
 function normalizePairing(
   options?: ObservedAbPairingOptions,
 ): Required<ObservedAbPairingOptions> {
+  const minOccurrencesPerFamily = Number.isFinite(options?.minOccurrencesPerFamily)
+    ? Math.max(2, Math.floor(options?.minOccurrencesPerFamily ?? 2))
+    : DEFAULT_PAIRING.minOccurrencesPerFamily;
+
+  const maxWallTimeRatio = Number.isFinite(options?.maxWallTimeRatio)
+    ? Math.max(1, options?.maxWallTimeRatio ?? 4)
+    : DEFAULT_PAIRING.maxWallTimeRatio;
+
+  const maxTokenCountRatio = Number.isFinite(options?.maxTokenCountRatio)
+    ? Math.max(1, options?.maxTokenCountRatio ?? 4)
+    : DEFAULT_PAIRING.maxTokenCountRatio;
+
   return {
     ...DEFAULT_PAIRING,
     ...options,
+    minOccurrencesPerFamily,
+    maxWallTimeRatio,
+    maxTokenCountRatio,
   };
 }
 
@@ -558,6 +590,30 @@ function summarizeTrust(
   };
 }
 
+function positiveRatio(left: number, right: number): number {
+  if (left === 0 && right === 0) {
+    return 1;
+  }
+
+  if (left <= 0 || right <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const max = Math.max(left, right);
+  const min = Math.min(left, right);
+  return max / min;
+}
+
+function pairQualityScore(wallTimeRatio: number, tokenCountRatio: number): number {
+  if (!Number.isFinite(wallTimeRatio) || !Number.isFinite(tokenCountRatio)) {
+    return 0;
+  }
+
+  const wallPenalty = Math.abs(Math.log2(wallTimeRatio));
+  const tokenPenalty = Math.abs(Math.log2(tokenCountRatio));
+  return 1 / (1 + wallPenalty + tokenPenalty);
+}
+
 function compareEpisodeTime(left: ObservedAbEpisode, right: ObservedAbEpisode): number {
   if (left.startedAt < right.startedAt) {
     return -1;
@@ -632,10 +688,10 @@ export function extractObservedAbEpisodes(events: TraceEvent[]): ObservedAbEpiso
   return episodes.sort(compareEpisodeTime);
 }
 
-export function buildObservedAbPairs(
+function buildObservedAbPairsWithDiagnostics(
   episodes: ObservedAbEpisode[],
   options?: ObservedAbPairingOptions,
-): ObservedAbPair[] {
+): { pairs: ObservedAbPair[]; diagnostics: ObservedAbPairingDiagnostics } {
   const pairing = normalizePairing(options);
   const byFamily = new Map<string, ObservedAbEpisode[]>();
 
@@ -648,6 +704,15 @@ export function buildObservedAbPairs(
     byFamily.set(episode.familySignature, [episode]);
   }
 
+  const diagnostics: ObservedAbPairingDiagnostics = {
+    familiesSeen: byFamily.size,
+    familiesEligible: 0,
+    candidateTransitions: 0,
+    droppedSameSession: 0,
+    droppedOutlierRatio: 0,
+    pairsBuilt: 0,
+  };
+
   const pairs: ObservedAbPair[] = [];
 
   for (const [familySignature, familyEpisodes] of byFamily.entries()) {
@@ -655,49 +720,68 @@ export function buildObservedAbPairs(
       continue;
     }
 
+    diagnostics.familiesEligible += 1;
+
     const sorted = [...familyEpisodes].sort(compareEpisodeTime);
-    const off = sorted[0];
-    if (!off) {
-      continue;
-    }
 
-    let on: ObservedAbEpisode | undefined = sorted[sorted.length - 1];
-    if (pairing.requireCrossSession) {
-      on = [...sorted]
-        .reverse()
-        .find((candidate) => candidate.sessionId !== off.sessionId);
-    }
+    for (let index = 1; index < sorted.length; index += 1) {
+      const off = sorted[index - 1];
+      const on = sorted[index];
+      if (!off || !on) {
+        continue;
+      }
 
-    if (!on || on.id === off.id) {
-      continue;
-    }
+      diagnostics.candidateTransitions += 1;
 
-    pairs.push({
-      id: `${familySignature}-pair-${pairs.length + 1}`,
-      familySignature,
-      description: off.description,
-      offEpisodeId: off.id,
-      onEpisodeId: on.id,
-      offSessionId: off.sessionId,
-      onSessionId: on.sessionId,
-      offStartedAt: off.startedAt,
-      onStartedAt: on.startedAt,
-      retriesOff: off.outcome.retries,
-      retriesOn: on.outcome.retries,
-      wallTimeOffMs: off.outcome.wallTimeMs,
-      wallTimeOnMs: on.outcome.wallTimeMs,
-      tokenCountOff: off.tokenCount,
-      tokenCountOn: on.tokenCount,
-      tokenProxyOff: off.tokenProxy,
-      tokenProxyOn: on.tokenProxy,
-      costOffUsd: off.outcome.costUsd,
-      costOnUsd: on.outcome.costUsd,
-      successOff: off.outcome.success,
-      successOn: on.outcome.success,
-    });
+      if (pairing.requireCrossSession && off.sessionId === on.sessionId) {
+        diagnostics.droppedSameSession += 1;
+        continue;
+      }
+
+      const wallTimeRatio = positiveRatio(
+        off.outcome.wallTimeMs,
+        on.outcome.wallTimeMs,
+      );
+      const tokenCountRatio = positiveRatio(off.tokenCount, on.tokenCount);
+
+      if (
+        wallTimeRatio > pairing.maxWallTimeRatio ||
+        tokenCountRatio > pairing.maxTokenCountRatio
+      ) {
+        diagnostics.droppedOutlierRatio += 1;
+        continue;
+      }
+
+      pairs.push({
+        id: `${familySignature}-pair-${pairs.length + 1}`,
+        familySignature,
+        description: off.description,
+        offEpisodeId: off.id,
+        onEpisodeId: on.id,
+        offSessionId: off.sessionId,
+        onSessionId: on.sessionId,
+        offStartedAt: off.startedAt,
+        onStartedAt: on.startedAt,
+        retriesOff: off.outcome.retries,
+        retriesOn: on.outcome.retries,
+        wallTimeOffMs: off.outcome.wallTimeMs,
+        wallTimeOnMs: on.outcome.wallTimeMs,
+        wallTimeRatio,
+        tokenCountOff: off.tokenCount,
+        tokenCountOn: on.tokenCount,
+        tokenCountRatio,
+        tokenProxyOff: off.tokenProxy,
+        tokenProxyOn: on.tokenProxy,
+        costOffUsd: off.outcome.costUsd,
+        costOnUsd: on.outcome.costUsd,
+        successOff: off.outcome.success,
+        successOn: on.outcome.success,
+        qualityScore: pairQualityScore(wallTimeRatio, tokenCountRatio),
+      });
+    }
   }
 
-  return pairs.sort((left, right) => {
+  const sortedPairs = pairs.sort((left, right) => {
     if (left.onStartedAt < right.onStartedAt) {
       return -1;
     }
@@ -706,6 +790,20 @@ export function buildObservedAbPairs(
     }
     return 0;
   });
+
+  diagnostics.pairsBuilt = sortedPairs.length;
+
+  return {
+    pairs: sortedPairs,
+    diagnostics,
+  };
+}
+
+export function buildObservedAbPairs(
+  episodes: ObservedAbEpisode[],
+  options?: ObservedAbPairingOptions,
+): ObservedAbPair[] {
+  return buildObservedAbPairsWithDiagnostics(episodes, options).pairs;
 }
 
 export function evaluateObservedAbGate(
@@ -716,16 +814,20 @@ export function evaluateObservedAbGate(
 ): ObservedAbReport {
   const normalizedThresholds = normalizeThresholds(thresholds);
   const normalizedPairing = normalizePairing(pairingOptions);
-  const pairs = buildObservedAbPairs(episodes, normalizedPairing);
-  const aggregate = aggregatePairs(pairs);
-  const trustSummary = summarizeTrust(pairs, trustOptions);
+  const pairingResult = buildObservedAbPairsWithDiagnostics(
+    episodes,
+    normalizedPairing,
+  );
+  const aggregate = aggregatePairs(pairingResult.pairs);
+  const trustSummary = summarizeTrust(pairingResult.pairs, trustOptions);
   const gateResult = evaluateGate(aggregate, normalizedThresholds);
 
   return {
     thresholds: normalizedThresholds,
     pairing: normalizedPairing,
+    pairingDiagnostics: pairingResult.diagnostics,
     episodes,
-    pairs,
+    pairs: pairingResult.pairs,
     aggregate,
     trustSummary,
     gateResult,

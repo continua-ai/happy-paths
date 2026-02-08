@@ -46,6 +46,8 @@ function parseArgs(argv: string[]) {
     json: false,
     minOccurrencesPerFamily: 2,
     requireCrossSession: true,
+    maxWallTimeRatio: undefined as number | undefined,
+    maxTokenCountRatio: undefined as number | undefined,
     thresholds: {} as {
       minPairCount?: number;
       minRelativeDeadEndReduction?: number;
@@ -96,6 +98,16 @@ function parseArgs(argv: string[]) {
     }
     if (token === "--allow-same-session") {
       options.requireCrossSession = false;
+      continue;
+    }
+    if (token === "--max-wall-time-ratio") {
+      options.maxWallTimeRatio = parseFloatOrUndefined(value);
+      index += 1;
+      continue;
+    }
+    if (token === "--max-token-count-ratio") {
+      options.maxTokenCountRatio = parseFloatOrUndefined(value);
+      index += 1;
       continue;
     }
     if (token === "--min-pair-count") {
@@ -297,6 +309,8 @@ async function main(): Promise<void> {
     {
       minOccurrencesPerFamily: options.minOccurrencesPerFamily,
       requireCrossSession: options.requireCrossSession,
+      maxWallTimeRatio: options.maxWallTimeRatio,
+      maxTokenCountRatio: options.maxTokenCountRatio,
     },
     {
       bootstrapSamples: options.bootstrapSamples,
@@ -338,6 +352,26 @@ async function main(): Promise<void> {
 
     const uniqueFamilies = new Set(report.pairs.map((pair) => pair.familySignature));
     console.log(`- repeated families with pairs: ${uniqueFamilies.size}`);
+
+    console.log(
+      [
+        "- pairing filters:",
+        `min_occurrences=${report.pairing.minOccurrencesPerFamily},`,
+        `cross_session=${report.pairing.requireCrossSession},`,
+        `max_wall_ratio=${report.pairing.maxWallTimeRatio.toFixed(2)},`,
+        `max_token_ratio=${report.pairing.maxTokenCountRatio.toFixed(2)}`,
+      ].join(" "),
+    );
+    console.log(
+      [
+        "- pairing diagnostics:",
+        `families_seen=${report.pairingDiagnostics.familiesSeen},`,
+        `families_eligible=${report.pairingDiagnostics.familiesEligible},`,
+        `candidate_transitions=${report.pairingDiagnostics.candidateTransitions},`,
+        `dropped_same_session=${report.pairingDiagnostics.droppedSameSession},`,
+        `dropped_outlier_ratio=${report.pairingDiagnostics.droppedOutlierRatio}`,
+      ].join(" "),
+    );
 
     console.log("- observed OFF -> ON deltas (measured):");
     console.log(

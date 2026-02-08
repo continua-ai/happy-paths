@@ -109,6 +109,10 @@ This command builds OFF/ON episode pairs from repeated signatures and reports
 measured wall time (seconds), token counts, token proxy, retries, and bootstrap
 intervals.
 
+Pairing quality is tightened by default using adjacent transitions within each
+family plus outlier filtering (`max_wall_ratio=4`, `max_token_ratio=4`). You
+can tune with `--max-wall-time-ratio` and `--max-token-count-ratio`.
+
 ## Scenario pack inputs
 
 Base fixture:

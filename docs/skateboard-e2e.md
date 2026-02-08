@@ -35,6 +35,10 @@ npm run eval:observed-ab -- \
   --tool-name bash
 ```
 
+Observed A/B pairing uses adjacent cross-session transitions and drops extreme
+mismatches by ratio. Optional tuning knobs:
+`--max-wall-time-ratio`, `--max-token-count-ratio`, `--allow-same-session`.
+
 Custom dataset mix:
 
 ```bash
