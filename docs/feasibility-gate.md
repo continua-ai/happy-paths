@@ -375,6 +375,14 @@ npm run loop:con1469 -- \
   --long-horizon-tool-name bash
 ```
 
+Quick corpus sweep helper (runs observed + trajectory gates across candidates):
+
+```bash
+npm run loop:con1469:sweep-roots -- \
+  --candidate 'happy-paths|.happy-paths|trace|bash' \
+  --candidate 'pi-sessions|~/.pi/agent/sessions|pi|bash'
+```
+
 Optional Linear update (uses `LINEAR_API_KEY`):
 
 ```bash
@@ -384,6 +392,6 @@ npm run loop:con1469 -- \
   --post-linear true
 ```
 
-The script prints key gate metrics (feasibility, observed A/B, trajectory),
-including generated-at timestamps, long-horizon corpus selection, and command
-provenance, so agents can ship and report in one pass.
+The loop + sweep scripts print key gate metrics (feasibility, observed A/B,
+trajectory), including generated-at timestamps, long-horizon corpus selection,
+and command provenance, so agents can ship and report in one pass.

@@ -35,6 +35,7 @@
     "memo:feasibility": "tsc -p tsconfig.build.json && tsx scripts/write-feasibility-memo.ts",
     "sync:evidence-web": "tsx scripts/publish-feasibility-evidence.ts",
     "loop:con1469": "tsx scripts/run-con1469-close-loop.ts",
+    "loop:con1469:sweep-roots": "tsx scripts/sweep-con1469-long-horizon-roots.ts",
     "typecheck": "tsc --noEmit",
     "verify": "biome check . && tsc --noEmit && vitest run",
     "verify:ci": "biome check . && tsc --noEmit && vitest run && tsx scripts/check-large-source-files.ts"
