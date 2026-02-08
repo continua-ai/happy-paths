@@ -727,6 +727,7 @@ async function main(): Promise<void> {
     const reportFilename = `r${index + 1}-${plan.idBase}-${slug}.json`;
     const reportPath = path.join(reportsRoot, reportFilename);
 
+    const runDataDir = path.join(tempDir, `feasibility-run-${runId}`);
     const runArgs = [
       "tsx",
       "scripts/run-feasibility-gate.ts",
@@ -734,7 +735,7 @@ async function main(): Promise<void> {
       "--dataset",
       "testdata/wrong_turn_dataset.json",
       "--data-dir",
-      `.happy-paths/evidence-${runId}`,
+      runDataDir,
       "--session-prefix",
       runId,
     ];
