@@ -65,6 +65,7 @@ type Options = {
   longHorizonTraceRoot: string;
   longHorizonFormat: TraceInputFormat;
   longHorizonToolName: string;
+  minFamilyDisjointPairCount: number;
 };
 
 type RunPlan = {
@@ -318,6 +319,7 @@ function parseArgs(argv: string[]): Options {
     longHorizonTraceRoot: ".happy-paths",
     longHorizonFormat: "trace",
     longHorizonToolName: "bash",
+    minFamilyDisjointPairCount: 20,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -356,6 +358,17 @@ function parseArgs(argv: string[]): Options {
     }
     if (token === "--long-horizon-tool-name") {
       options.longHorizonToolName = String(value);
+      index += 1;
+      continue;
+    }
+    if (token === "--min-family-disjoint-pair-count") {
+      const parsed = Number.parseInt(String(value), 10);
+      if (!Number.isFinite(parsed)) {
+        throw new Error(
+          `invalid --min-family-disjoint-pair-count value: ${String(value)}`,
+        );
+      }
+      options.minFamilyDisjointPairCount = Math.max(0, parsed);
       index += 1;
       continue;
     }
@@ -879,6 +892,8 @@ async function main(): Promise<void> {
     "2",
     "--eval-ratio",
     "0.3",
+    "--min-family-disjoint-pair-count",
+    String(options.minFamilyDisjointPairCount),
     "--out",
     trajectoryRawReportPath,
   ]);
@@ -924,6 +939,7 @@ async function main(): Promise<void> {
         longHorizonTraceRoot: options.longHorizonTraceRoot,
         longHorizonFormat: options.longHorizonFormat,
         longHorizonToolName: options.longHorizonToolName,
+        minFamilyDisjointPairCount: options.minFamilyDisjointPairCount,
         publicDataPath,
         latestRunId: publicData.runs?.[publicData.runs.length - 1]?.id ?? null,
         latestScenarioCount:
