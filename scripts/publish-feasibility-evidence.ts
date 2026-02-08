@@ -180,7 +180,74 @@ type ObservedAbEvidence = {
     pairingAlgorithm: string[];
     privacyNote: string;
   };
-  files: RawObservedAbLongHorizonReport["files"];
+  thresholds: {
+    minPairCount: number;
+    minRelativeDeadEndReduction: number;
+    minRelativeWallTimeReduction: number;
+    minRelativeTokenCountReduction: number;
+    minRecoverySuccessRateOn: number;
+    maxRecoverySuccessRateDrop: number;
+  };
+  pairing: {
+    minOccurrencesPerFamily: number;
+    requireCrossSession: boolean;
+    maxWallTimeRatio: number;
+    maxTokenCountRatio: number;
+  };
+  pairingDiagnostics: {
+    familiesSeen: number;
+    familiesEligible: number;
+    candidateTransitions: number;
+    droppedSameSession: number;
+    droppedOutlierRatio: number;
+    pairsBuilt: number;
+  };
+  aggregate: {
+    totalPairs: number;
+    totalRetriesOff: number;
+    totalRetriesOn: number;
+    repeatedDeadEndRateOff: number;
+    repeatedDeadEndRateOn: number;
+    recoverySuccessRateOff: number;
+    recoverySuccessRateOn: number;
+    totalWallTimeOffMs: number;
+    totalWallTimeOnMs: number;
+    totalTokenCountOff: number;
+    totalTokenCountOn: number;
+    totalCostOffUsd: number;
+    totalCostOnUsd: number;
+    relativeRepeatedDeadEndRateReduction: number;
+    relativeWallTimeReduction: number;
+    relativeTokenCountReduction: number;
+    absoluteRecoverySuccessRateDelta: number;
+  };
+  trustSummary: {
+    method: string;
+    sampleCount: number;
+    confidenceLevel: number;
+    deadEndReduction: ObservedAbInterval;
+    wallTimeReduction: ObservedAbInterval;
+    tokenCountReduction: ObservedAbInterval;
+    expectedDeadEndsAvoided: ObservedAbInterval;
+  };
+  gateResult: {
+    pass: boolean;
+    failures: string[];
+  };
+};
+
+type RawTrajectoryOutcomeReport = {
+  schemaVersion: number;
+  generatedAtUtc: string;
+  traceRoot: string;
+  format: string;
+  toolName: string;
+  files: {
+    traceFilesFound: number;
+    traceEventFilesScanned: number;
+    piSessionFilesScanned: number;
+    skippedForFormat: number;
+  };
   holdout: {
     minSessionDurationMs: number;
     minTotalLatencyMs: number;
@@ -190,18 +257,26 @@ type ObservedAbEvidence = {
     totalLongHorizonSessions: number;
     trainSessionCount: number;
     evalSessionCount: number;
-    trainEpisodeCount: number;
-    evalEpisodeCount: number;
-    familyOverlap: RawObservedAbLongHorizonReport["holdout"]["familyOverlap"];
+    familyOverlap: {
+      trainFamilyCount: number;
+      evalFamilyCount: number;
+      overlappingFamilyCount: number;
+      overlapRateByEvalFamilies: number;
+      overlapRateByTrainFamilies: number;
+    };
   };
-  thresholds: RawObservedAbLongHorizonReport["thresholds"];
-  pairing: RawObservedAbLongHorizonReport["pairing"];
-  pairingDiagnostics: RawObservedAbLongHorizonReport["pairingDiagnostics"];
-  aggregate: RawObservedAbLongHorizonReport["aggregate"];
-  trustSummary: RawObservedAbLongHorizonReport["trustSummary"];
-  gateResult: RawObservedAbLongHorizonReport["gateResult"];
+  trainEpisodeCount: number;
+  evalEpisodeCount: number;
+  thresholds: Record<string, unknown>;
+  pairing: Record<string, unknown>;
+  pairingDiagnostics: Record<string, unknown>;
+  aggregate: Record<string, unknown>;
+  trustSummary: Record<string, unknown>;
+  gateResult: {
+    pass: boolean;
+    failures: string[];
+  };
 };
-
 const DEFAULT_PI_SESSION_ROOT = path.join(
   process.env.HOME || "",
   ".pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469--",
@@ -465,7 +540,59 @@ function toObservedAbEvidence(raw: RawObservedAbLongHorizonReport): ObservedAbEv
       privacyNote:
         "Public view includes only aggregate metrics and diagnostics; raw private trace content is not displayed.",
     },
-    files: raw.files,
+    thresholds: {
+      minPairCount: raw.thresholds.minPairCount,
+      minRelativeDeadEndReduction: raw.thresholds.minRelativeDeadEndReduction,
+      minRelativeWallTimeReduction: raw.thresholds.minRelativeWallTimeReduction,
+      minRelativeTokenCountReduction: raw.thresholds.minRelativeTokenCountReduction,
+      minRecoverySuccessRateOn: raw.thresholds.minRecoverySuccessRateOn,
+      maxRecoverySuccessRateDrop: raw.thresholds.maxRecoverySuccessRateDrop,
+    },
+    pairing: {
+      minOccurrencesPerFamily: raw.pairing.minOccurrencesPerFamily,
+      requireCrossSession: true,
+      maxWallTimeRatio: raw.pairing.maxWallTimeRatio,
+      maxTokenCountRatio: raw.pairing.maxTokenCountRatio,
+    },
+    pairingDiagnostics: raw.pairingDiagnostics,
+    aggregate: {
+      totalPairs: raw.aggregate.totalPairs,
+      totalRetriesOff: raw.aggregate.totalRetriesOff,
+      totalRetriesOn: raw.aggregate.totalRetriesOn,
+      repeatedDeadEndRateOff: raw.aggregate.repeatedDeadEndRateOff,
+      repeatedDeadEndRateOn: raw.aggregate.repeatedDeadEndRateOn,
+      recoverySuccessRateOff: raw.aggregate.recoverySuccessRateOff,
+      recoverySuccessRateOn: raw.aggregate.recoverySuccessRateOn,
+      totalWallTimeOffMs: raw.aggregate.totalWallTimeOffMs,
+      totalWallTimeOnMs: raw.aggregate.totalWallTimeOnMs,
+      totalTokenCountOff: raw.aggregate.totalTokenCountOff,
+      totalTokenCountOn: raw.aggregate.totalTokenCountOn,
+      totalCostOffUsd: raw.aggregate.totalCostOffUsd,
+      totalCostOnUsd: raw.aggregate.totalCostOnUsd,
+      relativeRepeatedDeadEndRateReduction:
+        raw.aggregate.relativeRepeatedDeadEndRateReduction,
+      relativeWallTimeReduction: raw.aggregate.relativeWallTimeReduction,
+      relativeTokenCountReduction: raw.aggregate.relativeTokenCountReduction,
+      absoluteRecoverySuccessRateDelta: raw.aggregate.absoluteRecoverySuccessRateDelta,
+    },
+    trustSummary: {
+      method: raw.trustSummary.method,
+      sampleCount: raw.trustSummary.sampleCount,
+      confidenceLevel: raw.trustSummary.confidenceLevel,
+      deadEndReduction: raw.trustSummary.deadEndReduction,
+      wallTimeReduction: raw.trustSummary.wallTimeReduction,
+      tokenCountReduction: raw.trustSummary.tokenCountReduction,
+      expectedDeadEndsAvoided: raw.trustSummary.expectedDeadEndsAvoided,
+    },
+    gateResult: raw.gateResult,
+  };
+}
+
+function sanitizeTrajectoryOutcomeReportForWeb(
+  raw: RawTrajectoryOutcomeReport,
+): RawTrajectoryOutcomeReport {
+  return {
+    ...raw,
     holdout: {
       minSessionDurationMs: raw.holdout.minSessionDurationMs,
       minTotalLatencyMs: raw.holdout.minTotalLatencyMs,
@@ -475,16 +602,8 @@ function toObservedAbEvidence(raw: RawObservedAbLongHorizonReport): ObservedAbEv
       totalLongHorizonSessions: raw.holdout.totalLongHorizonSessions,
       trainSessionCount: raw.holdout.trainSessionCount,
       evalSessionCount: raw.holdout.evalSessionCount,
-      trainEpisodeCount: raw.trainEpisodeCount,
-      evalEpisodeCount: raw.evalEpisodeCount,
       familyOverlap: raw.holdout.familyOverlap,
     },
-    thresholds: raw.thresholds,
-    pairing: raw.pairing,
-    pairingDiagnostics: raw.pairingDiagnostics,
-    aggregate: raw.aggregate,
-    trustSummary: raw.trustSummary,
-    gateResult: raw.gateResult,
   };
 }
 
@@ -708,11 +827,10 @@ async function main(): Promise<void> {
     "utf-8",
   );
 
-  const trajectoryEvidencePath = path.join(
-    webRepoRoot,
-    "evidence/trajectory_outcome/report.json",
+  const trajectoryRawReportPath = path.join(
+    tempDir,
+    "trajectory_outcome_long_horizon_raw.json",
   );
-  await mkdir(path.dirname(trajectoryEvidencePath), { recursive: true });
   runCommand(repoRoot, "npx", [
     "tsx",
     "scripts/run-trajectory-outcome-long-horizon.ts",
@@ -731,8 +849,28 @@ async function main(): Promise<void> {
     "--eval-ratio",
     "0.3",
     "--out",
-    trajectoryEvidencePath,
+    trajectoryRawReportPath,
   ]);
+
+  const trajectoryRawReport = JSON.parse(
+    await readFile(trajectoryRawReportPath, "utf-8"),
+  ) as RawTrajectoryOutcomeReport;
+  if (trajectoryRawReport.schemaVersion !== 1) {
+    throw new Error(
+      `unsupported trajectory schema version: ${trajectoryRawReport.schemaVersion}`,
+    );
+  }
+
+  const trajectoryEvidencePath = path.join(
+    webRepoRoot,
+    "evidence/trajectory_outcome/report.json",
+  );
+  await mkdir(path.dirname(trajectoryEvidencePath), { recursive: true });
+  await writeFile(
+    trajectoryEvidencePath,
+    `${JSON.stringify(sanitizeTrajectoryOutcomeReportForWeb(trajectoryRawReport), null, 2)}\n`,
+    "utf-8",
+  );
 
   runCommand(webRepoRoot, "npm", ["run", "generate:evidence"]);
 
