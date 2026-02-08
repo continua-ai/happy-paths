@@ -8,6 +8,7 @@ import {
   type FeasibilityThresholds,
   buildFeasibilityDecisionMemo,
   evaluateFeasibilityGate,
+  summarizeFeasibilityTrust,
 } from "../src/core/feasibilityGate.js";
 import {
   type WrongTurnDataset,
@@ -65,6 +66,15 @@ describe("feasibility gate", () => {
     expect(report.aggregate.relativeRepeatedDeadEndRateReduction).toBeGreaterThan(0);
     expect(report.gateResult.pass).toBe(true);
 
+    expect(report.trustSummary.method).toBe("paired_bootstrap");
+    expect(report.trustSummary.sampleCount).toBeGreaterThanOrEqual(200);
+    expect(report.trustSummary.deadEndReduction.high).toBeGreaterThanOrEqual(
+      report.trustSummary.deadEndReduction.low,
+    );
+    expect(report.trustSummary.expectedRepeatedDeadEndsAvoided.median).toBeGreaterThan(
+      0,
+    );
+
     const memo = buildFeasibilityDecisionMemo(report);
     expect(memo.decision).toBe("go");
     expect(memo.topRisks.length).toBeGreaterThan(0);
@@ -103,5 +113,50 @@ describe("feasibility gate", () => {
 
     expect(report.gateResult.pass).toBe(false);
     expect(report.gateResult.failures.length).toBeGreaterThan(0);
+  });
+
+  it("produces deterministic trust summary with fixed options", async () => {
+    const dataset = await readDatasetFixture();
+    const scenarios = buildScenarioBatchFromDataset(dataset, {
+      harness: "pi",
+      scope: "personal",
+      sessionPrefix: "trust-summary",
+    });
+
+    const root = await mkdtemp(join(tmpdir(), "happy-paths-feasibility-trust-"));
+    tempDirs.push(root);
+
+    let loopIndex = 0;
+    const report = await evaluateFeasibilityGate(
+      scenarios,
+      () => {
+        loopIndex += 1;
+        return createLocalLearningLoop({
+          dataDir: join(root, `trust-loop-${loopIndex}`),
+        });
+      },
+      undefined,
+      {
+        bootstrapSamples: 300,
+        confidenceLevel: 0.9,
+        seed: 42,
+      },
+    );
+
+    const summaryA = summarizeFeasibilityTrust(report.scenarioEstimates, {
+      bootstrapSamples: 300,
+      confidenceLevel: 0.9,
+      seed: 42,
+    });
+    const summaryB = summarizeFeasibilityTrust(report.scenarioEstimates, {
+      bootstrapSamples: 300,
+      confidenceLevel: 0.9,
+      seed: 42,
+    });
+
+    expect(summaryA).toEqual(summaryB);
+    expect(summaryA.deadEndReduction.low).toBeGreaterThanOrEqual(0);
+    expect(summaryA.deadEndReduction.high).toBeLessThanOrEqual(1);
+    expect(summaryA.expectedRepeatedDeadEndsAvoided.median).toBeGreaterThan(0);
   });
 });

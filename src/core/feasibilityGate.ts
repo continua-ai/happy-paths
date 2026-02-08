@@ -43,6 +43,31 @@ export interface FeasibilityScenarioEstimate {
   recoverySuccessOn: boolean;
 }
 
+export interface FeasibilityTrustInterval {
+  low: number;
+  median: number;
+  high: number;
+}
+
+export interface FeasibilityTrustOptions {
+  bootstrapSamples?: number;
+  confidenceLevel?: number;
+  seed?: number;
+}
+
+export interface FeasibilityTrustSummary {
+  method: "paired_bootstrap";
+  sampleCount: number;
+  confidenceLevel: number;
+  deadEndReduction: FeasibilityTrustInterval;
+  wallTimeReduction: FeasibilityTrustInterval;
+  tokenProxyReduction: FeasibilityTrustInterval;
+  recoverySuccessRateOn: FeasibilityTrustInterval;
+  expectedRepeatedDeadEndsOff: FeasibilityTrustInterval;
+  expectedRepeatedDeadEndsOn: FeasibilityTrustInterval;
+  expectedRepeatedDeadEndsAvoided: FeasibilityTrustInterval;
+}
+
 export interface FeasibilityAggregate {
   totalScenarios: number;
   repeatedDeadEndRateOff: number;
@@ -72,6 +97,7 @@ export interface FeasibilityEvaluationReport {
   retrievalOn: FeasibilityRetrievalSummary;
   aggregate: FeasibilityAggregate;
   scenarioEstimates: FeasibilityScenarioEstimate[];
+  trustSummary: FeasibilityTrustSummary;
   gateResult: FeasibilityGateResult;
 }
 
@@ -94,6 +120,12 @@ const DEFAULT_THRESHOLDS: Required<FeasibilityThresholds> = {
   minRelativeTokenProxyReduction: 0.1,
   minRecoverySuccessRateOn: 0.9,
   maxRecoverySuccessRateDrop: 0,
+};
+
+const DEFAULT_TRUST_OPTIONS: Required<FeasibilityTrustOptions> = {
+  bootstrapSamples: 2000,
+  confidenceLevel: 0.95,
+  seed: 17,
 };
 
 export function defaultFeasibilityThresholds(): Required<FeasibilityThresholds> {
@@ -304,10 +336,272 @@ function evaluateThresholds(
   };
 }
 
+function normalizeTrustOptions(
+  options?: FeasibilityTrustOptions,
+): Required<FeasibilityTrustOptions> {
+  const configuredSamples = options?.bootstrapSamples;
+  const configuredConfidence = options?.confidenceLevel;
+  const configuredSeed = options?.seed;
+
+  const bootstrapSamples = Number.isFinite(configuredSamples)
+    ? Math.max(200, Math.floor(configuredSamples ?? 0))
+    : DEFAULT_TRUST_OPTIONS.bootstrapSamples;
+
+  const confidenceLevel = Number.isFinite(configuredConfidence)
+    ? Math.min(0.999, Math.max(0.5, configuredConfidence ?? 0.95))
+    : DEFAULT_TRUST_OPTIONS.confidenceLevel;
+
+  const seed = Number.isFinite(configuredSeed)
+    ? Math.floor(configuredSeed ?? DEFAULT_TRUST_OPTIONS.seed)
+    : DEFAULT_TRUST_OPTIONS.seed;
+
+  return {
+    bootstrapSamples,
+    confidenceLevel,
+    seed,
+  };
+}
+
+function createPrng(seed: number): () => number {
+  let state = seed >>> 0;
+  if (state === 0) {
+    state = 1;
+  }
+
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function hashScenarioSeed(estimates: FeasibilityScenarioEstimate[]): number {
+  let hash = 2166136261;
+  for (const estimate of estimates) {
+    const key = `${estimate.scenarioId}|${estimate.retriesOff}|${estimate.retriesOn}`;
+    for (let index = 0; index < key.length; index += 1) {
+      hash ^= key.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+  }
+  return hash >>> 0;
+}
+
+function quantile(values: number[], q: number): number {
+  if (values.length === 0) {
+    return 0;
+  }
+  if (values.length === 1) {
+    return values[0] ?? 0;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const position = (sorted.length - 1) * q;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  const lowerValue = sorted[lower] ?? 0;
+  const upperValue = sorted[upper] ?? lowerValue;
+
+  if (lower === upper) {
+    return lowerValue;
+  }
+
+  const fraction = position - lower;
+  return lowerValue + (upperValue - lowerValue) * fraction;
+}
+
+function buildInterval(
+  values: number[],
+  confidenceLevel: number,
+): FeasibilityTrustInterval {
+  if (values.length === 0) {
+    return {
+      low: 0,
+      median: 0,
+      high: 0,
+    };
+  }
+
+  const tail = (1 - confidenceLevel) / 2;
+  const low = quantile(values, tail);
+  const median = quantile(values, 0.5);
+  const high = quantile(values, 1 - tail);
+
+  return {
+    low,
+    median,
+    high,
+  };
+}
+
+function buildAggregateFromEstimates(
+  estimates: FeasibilityScenarioEstimate[],
+): FeasibilityAggregate {
+  const totalScenarios = estimates.length;
+  const repeatedDeadEndRateOff =
+    totalScenarios === 0
+      ? 0
+      : estimates.filter((entry) => entry.retriesOff > 0).length / totalScenarios;
+  const repeatedDeadEndRateOn =
+    totalScenarios === 0
+      ? 0
+      : estimates.filter((entry) => entry.retriesOn > 0).length / totalScenarios;
+
+  const recoverySuccessRateOff =
+    totalScenarios === 0
+      ? 0
+      : estimates.filter((entry) => entry.recoverySuccessOff).length / totalScenarios;
+  const recoverySuccessRateOn =
+    totalScenarios === 0
+      ? 0
+      : estimates.filter((entry) => entry.recoverySuccessOn).length / totalScenarios;
+
+  const totalWallTimeOffMs = estimates.reduce(
+    (sum, entry) => sum + entry.wallTimeOffMs,
+    0,
+  );
+  const totalWallTimeOnMs = estimates.reduce(
+    (sum, entry) => sum + entry.wallTimeOnMs,
+    0,
+  );
+  const totalTokenProxyOff = estimates.reduce(
+    (sum, entry) => sum + entry.tokenProxyOff,
+    0,
+  );
+  const totalTokenProxyOn = estimates.reduce(
+    (sum, entry) => sum + entry.tokenProxyOn,
+    0,
+  );
+  const totalCostOffUsd = estimates.reduce((sum, entry) => sum + entry.costOffUsd, 0);
+  const totalCostOnUsd = estimates.reduce((sum, entry) => sum + entry.costOnUsd, 0);
+
+  return {
+    totalScenarios,
+    repeatedDeadEndRateOff,
+    repeatedDeadEndRateOn,
+    recoverySuccessRateOff,
+    recoverySuccessRateOn,
+    totalWallTimeOffMs,
+    totalWallTimeOnMs,
+    totalTokenProxyOff,
+    totalTokenProxyOn,
+    totalCostOffUsd,
+    totalCostOnUsd,
+    relativeRepeatedDeadEndRateReduction: relativeReduction(
+      repeatedDeadEndRateOff,
+      repeatedDeadEndRateOn,
+    ),
+    relativeWallTimeReduction: relativeReduction(totalWallTimeOffMs, totalWallTimeOnMs),
+    relativeTokenProxyReduction: relativeReduction(
+      totalTokenProxyOff,
+      totalTokenProxyOn,
+    ),
+    absoluteRecoverySuccessRateDelta: recoverySuccessRateOn - recoverySuccessRateOff,
+  };
+}
+
+export function summarizeFeasibilityTrust(
+  estimates: FeasibilityScenarioEstimate[],
+  options?: FeasibilityTrustOptions,
+): FeasibilityTrustSummary {
+  const normalizedOptions = normalizeTrustOptions(options);
+
+  if (estimates.length === 0) {
+    const zeroInterval: FeasibilityTrustInterval = {
+      low: 0,
+      median: 0,
+      high: 0,
+    };
+
+    return {
+      method: "paired_bootstrap",
+      sampleCount: normalizedOptions.bootstrapSamples,
+      confidenceLevel: normalizedOptions.confidenceLevel,
+      deadEndReduction: zeroInterval,
+      wallTimeReduction: zeroInterval,
+      tokenProxyReduction: zeroInterval,
+      recoverySuccessRateOn: zeroInterval,
+      expectedRepeatedDeadEndsOff: zeroInterval,
+      expectedRepeatedDeadEndsOn: zeroInterval,
+      expectedRepeatedDeadEndsAvoided: zeroInterval,
+    };
+  }
+
+  const random = createPrng(normalizedOptions.seed ^ hashScenarioSeed(estimates));
+
+  const deadEndReductionSamples: number[] = [];
+  const wallTimeReductionSamples: number[] = [];
+  const tokenProxyReductionSamples: number[] = [];
+  const recoverySuccessSamples: number[] = [];
+  const expectedDeadEndsOffSamples: number[] = [];
+  const expectedDeadEndsOnSamples: number[] = [];
+  const expectedDeadEndsAvoidedSamples: number[] = [];
+
+  for (let sample = 0; sample < normalizedOptions.bootstrapSamples; sample += 1) {
+    const sampled: FeasibilityScenarioEstimate[] = [];
+    for (let index = 0; index < estimates.length; index += 1) {
+      const randomIndex = Math.floor(random() * estimates.length);
+      const estimate = estimates[randomIndex];
+      if (!estimate) {
+        continue;
+      }
+      sampled.push(estimate);
+    }
+
+    const aggregate = buildAggregateFromEstimates(sampled);
+    const expectedDeadEndsOff =
+      aggregate.repeatedDeadEndRateOff * aggregate.totalScenarios;
+    const expectedDeadEndsOn =
+      aggregate.repeatedDeadEndRateOn * aggregate.totalScenarios;
+
+    deadEndReductionSamples.push(aggregate.relativeRepeatedDeadEndRateReduction);
+    wallTimeReductionSamples.push(aggregate.relativeWallTimeReduction);
+    tokenProxyReductionSamples.push(aggregate.relativeTokenProxyReduction);
+    recoverySuccessSamples.push(aggregate.recoverySuccessRateOn);
+    expectedDeadEndsOffSamples.push(expectedDeadEndsOff);
+    expectedDeadEndsOnSamples.push(expectedDeadEndsOn);
+    expectedDeadEndsAvoidedSamples.push(expectedDeadEndsOff - expectedDeadEndsOn);
+  }
+
+  return {
+    method: "paired_bootstrap",
+    sampleCount: normalizedOptions.bootstrapSamples,
+    confidenceLevel: normalizedOptions.confidenceLevel,
+    deadEndReduction: buildInterval(
+      deadEndReductionSamples,
+      normalizedOptions.confidenceLevel,
+    ),
+    wallTimeReduction: buildInterval(
+      wallTimeReductionSamples,
+      normalizedOptions.confidenceLevel,
+    ),
+    tokenProxyReduction: buildInterval(
+      tokenProxyReductionSamples,
+      normalizedOptions.confidenceLevel,
+    ),
+    recoverySuccessRateOn: buildInterval(
+      recoverySuccessSamples,
+      normalizedOptions.confidenceLevel,
+    ),
+    expectedRepeatedDeadEndsOff: buildInterval(
+      expectedDeadEndsOffSamples,
+      normalizedOptions.confidenceLevel,
+    ),
+    expectedRepeatedDeadEndsOn: buildInterval(
+      expectedDeadEndsOnSamples,
+      normalizedOptions.confidenceLevel,
+    ),
+    expectedRepeatedDeadEndsAvoided: buildInterval(
+      expectedDeadEndsAvoidedSamples,
+      normalizedOptions.confidenceLevel,
+    ),
+  };
+}
+
 export async function evaluateFeasibilityGate(
   scenarios: WrongTurnScenario[],
   createLoop: () => LearningLoop,
   thresholds?: FeasibilityThresholds,
+  trustOptions?: FeasibilityTrustOptions,
 ): Promise<FeasibilityEvaluationReport> {
   const offResults: WrongTurnScenarioResult[] = [];
   const onResults: WrongTurnScenarioResult[] = [];
@@ -364,69 +658,10 @@ export async function evaluateFeasibilityGate(
     });
   }
 
-  const totalScenarios = estimates.length;
-  const repeatedDeadEndRateOff =
-    totalScenarios === 0
-      ? 0
-      : estimates.filter((entry) => entry.retriesOff > 0).length / totalScenarios;
-  const repeatedDeadEndRateOn =
-    totalScenarios === 0
-      ? 0
-      : estimates.filter((entry) => entry.retriesOn > 0).length / totalScenarios;
-
-  const recoverySuccessRateOff =
-    totalScenarios === 0
-      ? 0
-      : estimates.filter((entry) => entry.recoverySuccessOff).length / totalScenarios;
-  const recoverySuccessRateOn =
-    totalScenarios === 0
-      ? 0
-      : estimates.filter((entry) => entry.recoverySuccessOn).length / totalScenarios;
-
-  const totalWallTimeOffMs = estimates.reduce(
-    (sum, entry) => sum + entry.wallTimeOffMs,
-    0,
-  );
-  const totalWallTimeOnMs = estimates.reduce(
-    (sum, entry) => sum + entry.wallTimeOnMs,
-    0,
-  );
-  const totalTokenProxyOff = estimates.reduce(
-    (sum, entry) => sum + entry.tokenProxyOff,
-    0,
-  );
-  const totalTokenProxyOn = estimates.reduce(
-    (sum, entry) => sum + entry.tokenProxyOn,
-    0,
-  );
-  const totalCostOffUsd = estimates.reduce((sum, entry) => sum + entry.costOffUsd, 0);
-  const totalCostOnUsd = estimates.reduce((sum, entry) => sum + entry.costOnUsd, 0);
-
-  const aggregate: FeasibilityAggregate = {
-    totalScenarios,
-    repeatedDeadEndRateOff,
-    repeatedDeadEndRateOn,
-    recoverySuccessRateOff,
-    recoverySuccessRateOn,
-    totalWallTimeOffMs,
-    totalWallTimeOnMs,
-    totalTokenProxyOff,
-    totalTokenProxyOn,
-    totalCostOffUsd,
-    totalCostOnUsd,
-    relativeRepeatedDeadEndRateReduction: relativeReduction(
-      repeatedDeadEndRateOff,
-      repeatedDeadEndRateOn,
-    ),
-    relativeWallTimeReduction: relativeReduction(totalWallTimeOffMs, totalWallTimeOnMs),
-    relativeTokenProxyReduction: relativeReduction(
-      totalTokenProxyOff,
-      totalTokenProxyOn,
-    ),
-    absoluteRecoverySuccessRateDelta: recoverySuccessRateOn - recoverySuccessRateOff,
-  };
+  const aggregate = buildAggregateFromEstimates(estimates);
 
   const normalizedThresholds = normalizeThresholds(thresholds);
+  const trustSummary = summarizeFeasibilityTrust(estimates, trustOptions);
   const gateResult = evaluateThresholds(aggregate, normalizedThresholds);
 
   return {
@@ -435,6 +670,7 @@ export async function evaluateFeasibilityGate(
     retrievalOn: summarizeRetrieval(onResults),
     aggregate,
     scenarioEstimates: estimates,
+    trustSummary,
     gateResult,
   };
 }

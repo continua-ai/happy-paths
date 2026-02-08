@@ -22,6 +22,7 @@
     "test:wrong-turn-gate": "vitest run tests/wrong-turn-dataset.test.ts",
     "eval:wrong-turn": "tsc -p tsconfig.build.json && tsx scripts/run-wrong-turn-eval.ts --strict",
     "eval:feasibility": "tsc -p tsconfig.build.json && tsx scripts/run-feasibility-gate.ts --strict",
+    "eval:skateboard": "tsc -p tsconfig.build.json && tsx scripts/run-feasibility-gate.ts --strict --bootstrap-samples 4000 --confidence-level 0.95",
     "build:feasibility-dataset": "tsc -p tsconfig.build.json && tsx scripts/build-feasibility-dataset-from-traces.ts",
     "memo:feasibility": "tsc -p tsconfig.build.json && tsx scripts/write-feasibility-memo.ts",
     "sync:evidence-web": "tsx scripts/publish-feasibility-evidence.ts",

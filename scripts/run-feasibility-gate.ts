@@ -16,6 +16,21 @@ function parseFloatOrUndefined(value) {
   return parsed;
 }
 
+function parseIntOrUndefined(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`invalid integer: ${value}`);
+  }
+  return parsed;
+}
+
+function formatInterval(interval, digits = 3) {
+  return `${interval.low.toFixed(digits)} / ${interval.median.toFixed(digits)} / ${interval.high.toFixed(digits)}`;
+}
+
 function parseArgs(argv) {
   const options = {
     dataset: "testdata/wrong_turn_dataset.json",
@@ -27,6 +42,9 @@ function parseArgs(argv) {
     scope: "personal",
     sessionPrefix: "feasibility-session",
     thresholds: {},
+    bootstrapSamples: undefined,
+    confidenceLevel: undefined,
+    seed: undefined,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -85,6 +103,21 @@ function parseArgs(argv) {
     }
     if (token === "--max-recovery-success-rate-drop") {
       options.thresholds.maxRecoverySuccessRateDrop = parseFloatOrUndefined(value);
+      index += 1;
+      continue;
+    }
+    if (token === "--bootstrap-samples") {
+      options.bootstrapSamples = parseIntOrUndefined(value);
+      index += 1;
+      continue;
+    }
+    if (token === "--confidence-level") {
+      options.confidenceLevel = parseFloatOrUndefined(value);
+      index += 1;
+      continue;
+    }
+    if (token === "--seed") {
+      options.seed = parseIntOrUndefined(value);
       index += 1;
       continue;
     }
@@ -157,6 +190,11 @@ async function main() {
       });
     },
     thresholds,
+    {
+      bootstrapSamples: options.bootstrapSamples,
+      confidenceLevel: options.confidenceLevel,
+      seed: options.seed,
+    },
   );
 
   if (options.json) {
@@ -206,6 +244,56 @@ async function main() {
         `${report.aggregate.recoverySuccessRateOff.toFixed(3)} ->`,
         report.aggregate.recoverySuccessRateOn.toFixed(3),
         `(delta ${report.aggregate.absoluteRecoverySuccessRateDelta.toFixed(3)})`,
+      ].join(" "),
+    );
+
+    console.log(
+      [
+        "- trust (paired bootstrap):",
+        `${report.trustSummary.sampleCount} samples,`,
+        `${(report.trustSummary.confidenceLevel * 100).toFixed(1)}% CI`,
+      ].join(" "),
+    );
+    console.log(
+      [
+        "  - dead-end reduction (low/median/high):",
+        formatInterval(report.trustSummary.deadEndReduction),
+      ].join(" "),
+    );
+    console.log(
+      [
+        "  - wall-time reduction (low/median/high):",
+        formatInterval(report.trustSummary.wallTimeReduction),
+      ].join(" "),
+    );
+    console.log(
+      [
+        "  - token-proxy reduction (low/median/high):",
+        formatInterval(report.trustSummary.tokenProxyReduction),
+      ].join(" "),
+    );
+    console.log(
+      [
+        "  - recovery success ON (low/median/high):",
+        formatInterval(report.trustSummary.recoverySuccessRateOn),
+      ].join(" "),
+    );
+    console.log(
+      [
+        "  - expected repeated dead-ends OFF (low/median/high):",
+        formatInterval(report.trustSummary.expectedRepeatedDeadEndsOff, 1),
+      ].join(" "),
+    );
+    console.log(
+      [
+        "  - expected repeated dead-ends ON (low/median/high):",
+        formatInterval(report.trustSummary.expectedRepeatedDeadEndsOn, 1),
+      ].join(" "),
+    );
+    console.log(
+      [
+        "  - expected dead-ends avoided (low/median/high):",
+        formatInterval(report.trustSummary.expectedRepeatedDeadEndsAvoided, 1),
       ].join(" "),
     );
 
