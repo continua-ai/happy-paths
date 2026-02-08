@@ -193,6 +193,8 @@ Dataset fixture: `testdata/wrong_turn_dataset.json`
 npm run test:wrong-turn-gate
 npm run eval:wrong-turn
 npm run eval:feasibility
+npm run memo:feasibility
+npm run sync:evidence-web
 ```
 
 CI enforces this gate so suggestion quality remains visible while iterating on
@@ -200,6 +202,8 @@ speed/cost optimizations.
 
 For stage-0 go/no-go validation, use the feasibility gate flow in
 `docs/feasibility-gate.md`.
+
+The generated decision memo format lives at `docs/feasibility-decision.md`.
 
 Beyond LLM token/cost savings, Happy Paths also tracks expensive execution
 surfaces (long-running tools, test suites, CI workflows) so optimization can

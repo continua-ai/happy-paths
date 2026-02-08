@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createLocalLearningLoop } from "../src/backends/local/index.js";
 import {
   type FeasibilityThresholds,
+  buildFeasibilityDecisionMemo,
   evaluateFeasibilityGate,
 } from "../src/core/feasibilityGate.js";
 import {
@@ -63,6 +64,10 @@ describe("feasibility gate", () => {
     );
     expect(report.aggregate.relativeRepeatedDeadEndRateReduction).toBeGreaterThan(0);
     expect(report.gateResult.pass).toBe(true);
+
+    const memo = buildFeasibilityDecisionMemo(report);
+    expect(memo.decision).toBe("go");
+    expect(memo.topRisks.length).toBeGreaterThan(0);
   });
 
   it("fails the gate with overly strict thresholds", async () => {

@@ -54,7 +54,7 @@ npm run eval:feasibility
 JSON output:
 
 ```bash
-node scripts/run-feasibility-gate.mjs --json
+tsx scripts/run-feasibility-gate.ts --json
 ```
 
 ## Scenario pack inputs
@@ -63,14 +63,74 @@ Base fixture:
 
 - `testdata/wrong_turn_dataset.json`
 
-You can add fresh scenarios (for example, distilled from recent Pi traces) via
-additional dataset files in the same schema:
+### Build a fresh dataset from JSONL traces
+
+Contilore trace JSONL (`tool_result` events already in trace schema):
 
 ```bash
-node scripts/run-feasibility-gate.mjs \
+tsx scripts/build-feasibility-dataset-from-traces.ts \
+  --trace-root .happy-paths \
+  --format trace \
+  --out /tmp/fresh_pi_scenarios.json
+```
+
+Raw Pi session JSONL (`~/.pi/agent/sessions/**.jsonl`):
+
+```bash
+tsx scripts/build-feasibility-dataset-from-traces.ts \
+  --trace-root ~/.pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469-- \
+  --format pi \
+  --tool-name bash \
+  --out /tmp/fresh_pi_scenarios.json
+```
+
+Default `--format auto` picks trace schema when present, otherwise Pi-session
+parsing.
+
+By default, long query text/signature/output fields are truncated for dataset
+hygiene. Override with `--max-query-text-chars`, `--max-signature-chars`, and
+`--max-tool-output-chars` if needed.
+
+### Run feasibility gate with base + fresh datasets
+
+```bash
+tsx scripts/run-feasibility-gate.ts \
   --dataset testdata/wrong_turn_dataset.json \
-  --additional-dataset /path/to/fresh_pi_scenarios.json \
+  --additional-dataset /tmp/fresh_pi_scenarios.json \
   --strict
+```
+
+## Decision memo output
+
+Generate a markdown go/no-go memo with top risks:
+
+```bash
+tsx scripts/write-feasibility-memo.ts \
+  --dataset testdata/wrong_turn_dataset.json \
+  --additional-dataset /tmp/fresh_pi_scenarios.json \
+  --out docs/feasibility-decision.md
+```
+
+The memo includes the go/no-go decision, quantified deltas, threshold checks,
+and top two risks.
+
+## One-click sync to website evidence
+
+From the OSS repo, generate run reports + manifest + definitions + big ideas,
+then refresh website evidence artifacts:
+
+```bash
+npm run sync:evidence-web
+```
+
+Optional overrides:
+
+```bash
+npm run sync:evidence-web -- \
+  --web-repo-root ../happy-paths-web \
+  --trace-root .happy-paths/feasibility-run \
+  --pi-session-root ~/.pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469-- \
+  --include-pi-session true
 ```
 
 This stage is intentionally small and always end-to-end; later stages should

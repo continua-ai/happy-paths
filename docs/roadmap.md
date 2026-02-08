@@ -1,5 +1,14 @@
 # Roadmap
 
+## Big ideas
+
+- **Prediction is compression**: if we can predict likely future wrong turns, we
+  can represent and reuse execution knowledge with much lower token/time cost.
+- **Batchactive-style lookahead for agents**: proactively evaluate a small set
+  of likely next branches so recovery candidates are ready when the user asks.
+- **Correctness-first acceleration**: latency and cost wins only count if
+  recovery success and safety gates stay intact.
+
 ## Phase 0 (current)
 
 - schema + core interfaces

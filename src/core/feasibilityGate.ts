@@ -75,6 +75,19 @@ export interface FeasibilityEvaluationReport {
   gateResult: FeasibilityGateResult;
 }
 
+export type FeasibilityDecision = "go" | "no_go";
+
+export interface FeasibilityDecisionRisk {
+  title: string;
+  detail: string;
+}
+
+export interface FeasibilityDecisionMemo {
+  decision: FeasibilityDecision;
+  summary: string;
+  topRisks: FeasibilityDecisionRisk[];
+}
+
 const DEFAULT_THRESHOLDS: Required<FeasibilityThresholds> = {
   minRelativeDeadEndRateReduction: 0.25,
   minRelativeWallTimeReduction: 0.1,
@@ -423,5 +436,65 @@ export async function evaluateFeasibilityGate(
     aggregate,
     scenarioEstimates: estimates,
     gateResult,
+  };
+}
+
+export function buildFeasibilityDecisionMemo(
+  report: FeasibilityEvaluationReport,
+): FeasibilityDecisionMemo {
+  const decision: FeasibilityDecision = report.gateResult.pass ? "go" : "no_go";
+
+  const risks: FeasibilityDecisionRisk[] = [];
+
+  if (report.aggregate.totalScenarios < 5) {
+    risks.push({
+      title: "Small scenario sample",
+      detail:
+        "Current feasibility run uses fewer than 5 scenarios; confidence is limited and should be expanded with fresh Pi traces.",
+    });
+  }
+
+  if (report.retrievalOff.hitAt3Rate === 0 && report.retrievalOn.hitAt3Rate >= 0.8) {
+    risks.push({
+      title: "Cold-start baseline may be too weak",
+      detail:
+        "OFF retrieval currently finds no top-3 matches. Validate against a stronger baseline and larger scenario mix to avoid overestimating gains.",
+    });
+  }
+
+  if (report.retrievalOn.hitAt1Rate < 0.5) {
+    risks.push({
+      title: "Top-1 precision remains low",
+      detail:
+        "Even if hit@3 is good, low hit@1 can create extra suggestion churn. Improve ranking quality before wider rollout.",
+    });
+  }
+
+  if (
+    report.aggregate.relativeWallTimeReduction <
+    report.thresholds.minRelativeWallTimeReduction + 0.05
+  ) {
+    risks.push({
+      title: "Wall-time gains have limited margin",
+      detail:
+        "Observed wall-time reduction is near threshold; improvements could disappear with noisier real-world traces.",
+    });
+  }
+
+  const topRisks = risks.slice(0, 2);
+
+  const summary = [
+    `Decision: ${decision.toUpperCase()}`,
+    `Scenarios: ${report.aggregate.totalScenarios}`,
+    `Dead-end reduction: ${report.aggregate.relativeRepeatedDeadEndRateReduction.toFixed(3)}`,
+    `Wall-time reduction: ${report.aggregate.relativeWallTimeReduction.toFixed(3)}`,
+    `Token-proxy reduction: ${report.aggregate.relativeTokenProxyReduction.toFixed(3)}`,
+    `Recovery success on: ${report.aggregate.recoverySuccessRateOn.toFixed(3)}`,
+  ].join(" | ");
+
+  return {
+    decision,
+    summary,
+    topRisks,
   };
 }
