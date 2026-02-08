@@ -341,3 +341,36 @@ npm run sync:evidence-web -- \
 
 This stage is intentionally small and always end-to-end; later stages should
 improve fidelity, not break the loop.
+
+## Agentic close-loop harness (CON-1469)
+
+For high-velocity iteration, run the end-to-end harness that executes local
+verification, syncs web evidence, verifies the web build, and writes both JSON
+and Markdown summaries in `.happy-paths/con1469-loop/`:
+
+```bash
+npm run loop:con1469
+```
+
+Modes:
+
+```bash
+# Skip local verify:ci, but refresh + verify web evidence
+npm run loop:con1469 -- --mode refresh
+
+# Read current evidence and generate summary only (no command execution)
+npm run loop:con1469 -- --mode summary
+```
+
+Optional Linear update (uses `LINEAR_API_KEY`):
+
+```bash
+npm run loop:con1469 -- \
+  --mode refresh \
+  --linear-issue CON-1469 \
+  --post-linear true
+```
+
+The script prints key gate metrics (feasibility, observed A/B, trajectory),
+including generated-at timestamps and command provenance, so agents can ship
+and report in one pass.

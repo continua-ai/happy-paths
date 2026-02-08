@@ -34,6 +34,7 @@
     "build:feasibility-dataset": "tsc -p tsconfig.build.json && tsx scripts/build-feasibility-dataset-from-traces.ts",
     "memo:feasibility": "tsc -p tsconfig.build.json && tsx scripts/write-feasibility-memo.ts",
     "sync:evidence-web": "tsx scripts/publish-feasibility-evidence.ts",
+    "loop:con1469": "tsx scripts/run-con1469-close-loop.ts",
     "typecheck": "tsc --noEmit",
     "verify": "biome check . && tsc --noEmit && vitest run",
     "verify:ci": "biome check . && tsc --noEmit && vitest run && tsx scripts/check-large-source-files.ts"
