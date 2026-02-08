@@ -6,6 +6,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 type LoopMode = "full" | "refresh" | "summary";
+type TraceInputFormat = "auto" | "trace" | "pi";
 
 type Options = {
   mode: LoopMode;
@@ -15,6 +16,9 @@ type Options = {
   postLinear: boolean;
   summaryJsonOut: string;
   summaryMarkdownOut: string;
+  longHorizonTraceRoot: string;
+  longHorizonFormat: TraceInputFormat;
+  longHorizonToolName: string;
 };
 
 type FeasibilityRun = {
@@ -85,6 +89,11 @@ type LoopSummary = {
   generatedAtUtc: string;
   mode: LoopMode;
   commandsRun: string[];
+  longHorizonInput: {
+    traceRoot: string;
+    format: TraceInputFormat;
+    toolName: string;
+  };
   feasibility: {
     generatedAtUtc: string;
     runCount: number;
@@ -152,6 +161,13 @@ function parseLoopMode(value: string): LoopMode {
   throw new Error(`invalid --mode value: ${value}`);
 }
 
+function parseTraceInputFormat(value: string): TraceInputFormat {
+  if (value === "auto" || value === "trace" || value === "pi") {
+    return value;
+  }
+  throw new Error(`invalid --long-horizon-format value: ${value}`);
+}
+
 function parseArgs(argv: string[]): Options {
   const repoRoot = process.cwd();
   const options: Options = {
@@ -168,6 +184,9 @@ function parseArgs(argv: string[]): Options {
       repoRoot,
       ".happy-paths/con1469-loop/latest-summary.md",
     ),
+    longHorizonTraceRoot: ".happy-paths",
+    longHorizonFormat: "trace",
+    longHorizonToolName: "bash",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -186,6 +205,21 @@ function parseArgs(argv: string[]): Options {
     }
     if (token === "--include-pi-session") {
       options.includePiSession = parseBoolean(String(value));
+      index += 1;
+      continue;
+    }
+    if (token === "--long-horizon-trace-root") {
+      options.longHorizonTraceRoot = path.resolve(repoRoot, String(value));
+      index += 1;
+      continue;
+    }
+    if (token === "--long-horizon-format") {
+      options.longHorizonFormat = parseTraceInputFormat(String(value));
+      index += 1;
+      continue;
+    }
+    if (token === "--long-horizon-tool-name") {
+      options.longHorizonToolName = String(value);
       index += 1;
       continue;
     }
@@ -416,6 +450,8 @@ function buildMarkdown(summary: LoopSummary): string {
     `CON-1469 close-loop run (${summary.mode})`,
     "",
     `- generatedAtUtc: ${formatUtcWithEastern(summary.generatedAtUtc)}`,
+    `- long-horizon trace root: ${summary.longHorizonInput.traceRoot}`,
+    `- long-horizon format/tool: ${summary.longHorizonInput.format} / ${summary.longHorizonInput.toolName}`,
     "",
     "Feasibility",
     `- generatedAtUtc: ${formatUtcWithEastern(summary.feasibility.generatedAtUtc)}`,
@@ -456,6 +492,7 @@ function collectSummary(
   trajectory: TrajectoryOutcomeReport,
   commandsRun: string[],
   reportPaths: LoopSummary["reportPaths"],
+  longHorizonInput: LoopSummary["longHorizonInput"],
 ): LoopSummary {
   const latestRun = feasibility.runs[feasibility.runs.length - 1];
   if (!latestRun) {
@@ -470,6 +507,7 @@ function collectSummary(
     generatedAtUtc: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
     mode: "summary",
     commandsRun,
+    longHorizonInput,
     feasibility: {
       generatedAtUtc: feasibility.generatedAtUtc,
       runCount: feasibility.runs.length,
@@ -529,6 +567,12 @@ async function main(): Promise<void> {
         options.webRepoRoot,
         "--include-pi-session",
         String(options.includePiSession),
+        "--long-horizon-trace-root",
+        options.longHorizonTraceRoot,
+        "--long-horizon-format",
+        options.longHorizonFormat,
+        "--long-horizon-tool-name",
+        options.longHorizonToolName,
       ],
       commandsRun,
     );
@@ -562,6 +606,11 @@ async function main(): Promise<void> {
     trajectory,
     commandsRun,
     reportPaths,
+    {
+      traceRoot: options.longHorizonTraceRoot,
+      format: options.longHorizonFormat,
+      toolName: options.longHorizonToolName,
+    },
   );
   summary.mode = options.mode;
 

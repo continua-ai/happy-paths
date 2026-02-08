@@ -336,7 +336,10 @@ npm run sync:evidence-web -- \
   --web-repo-root ../happy-paths-web \
   --trace-root .happy-paths/feasibility-run \
   --pi-session-root ~/.pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469-- \
-  --include-pi-session true
+  --include-pi-session true \
+  --long-horizon-trace-root .happy-paths \
+  --long-horizon-format trace \
+  --long-horizon-tool-name bash
 ```
 
 This stage is intentionally small and always end-to-end; later stages should
@@ -362,6 +365,16 @@ npm run loop:con1469 -- --mode refresh
 npm run loop:con1469 -- --mode summary
 ```
 
+Optional long-horizon corpus override (useful for fast root-cause sweeps):
+
+```bash
+npm run loop:con1469 -- \
+  --mode refresh \
+  --long-horizon-trace-root ~/.pi/agent/sessions \
+  --long-horizon-format pi \
+  --long-horizon-tool-name bash
+```
+
 Optional Linear update (uses `LINEAR_API_KEY`):
 
 ```bash
@@ -372,5 +385,5 @@ npm run loop:con1469 -- \
 ```
 
 The script prints key gate metrics (feasibility, observed A/B, trajectory),
-including generated-at timestamps and command provenance, so agents can ship
-and report in one pass.
+including generated-at timestamps, long-horizon corpus selection, and command
+provenance, so agents can ship and report in one pass.

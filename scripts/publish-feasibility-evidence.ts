@@ -53,6 +53,8 @@ type RunManifest = {
   runs: RunManifestRun[];
 };
 
+type TraceInputFormat = "auto" | "trace" | "pi";
+
 type Options = {
   webRepoRoot: string;
   traceRoot: string;
@@ -60,6 +62,9 @@ type Options = {
   includePiSession: boolean;
   harness: string;
   scope: "personal" | "team" | "public";
+  longHorizonTraceRoot: string;
+  longHorizonFormat: TraceInputFormat;
+  longHorizonToolName: string;
 };
 
 type RunPlan = {
@@ -295,6 +300,13 @@ function parseBoolean(value: string): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
+function parseTraceInputFormat(value: string): TraceInputFormat {
+  if (value === "auto" || value === "trace" || value === "pi") {
+    return value;
+  }
+  throw new Error(`invalid trace format: ${value}`);
+}
+
 function parseArgs(argv: string[]): Options {
   const options: Options = {
     webRepoRoot: path.resolve(process.cwd(), "../happy-paths-web"),
@@ -303,6 +315,9 @@ function parseArgs(argv: string[]): Options {
     includePiSession: true,
     harness: "pi",
     scope: "personal",
+    longHorizonTraceRoot: ".happy-paths",
+    longHorizonFormat: "trace",
+    longHorizonToolName: "bash",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -326,6 +341,21 @@ function parseArgs(argv: string[]): Options {
     }
     if (token === "--include-pi-session") {
       options.includePiSession = parseBoolean(String(value));
+      index += 1;
+      continue;
+    }
+    if (token === "--long-horizon-trace-root") {
+      options.longHorizonTraceRoot = path.resolve(String(value));
+      index += 1;
+      continue;
+    }
+    if (token === "--long-horizon-format") {
+      options.longHorizonFormat = parseTraceInputFormat(String(value));
+      index += 1;
+      continue;
+    }
+    if (token === "--long-horizon-tool-name") {
+      options.longHorizonToolName = String(value);
       index += 1;
       continue;
     }
@@ -791,11 +821,11 @@ async function main(): Promise<void> {
     "tsx",
     "scripts/run-observed-ab-long-horizon.ts",
     "--trace-root",
-    ".happy-paths",
+    options.longHorizonTraceRoot,
     "--format",
-    "trace",
+    options.longHorizonFormat,
     "--tool-name",
-    "bash",
+    options.longHorizonToolName,
     "--min-session-duration-ms",
     "1000",
     "--min-total-latency-ms",
@@ -836,11 +866,11 @@ async function main(): Promise<void> {
     "tsx",
     "scripts/run-trajectory-outcome-long-horizon.ts",
     "--trace-root",
-    ".happy-paths",
+    options.longHorizonTraceRoot,
     "--format",
-    "trace",
+    options.longHorizonFormat,
     "--tool-name",
-    "bash",
+    options.longHorizonToolName,
     "--min-session-duration-ms",
     "1000",
     "--min-total-latency-ms",
@@ -891,6 +921,9 @@ async function main(): Promise<void> {
         manifestPath,
         observedEvidencePath,
         trajectoryEvidencePath,
+        longHorizonTraceRoot: options.longHorizonTraceRoot,
+        longHorizonFormat: options.longHorizonFormat,
+        longHorizonToolName: options.longHorizonToolName,
         publicDataPath,
         latestRunId: publicData.runs?.[publicData.runs.length - 1]?.id ?? null,
         latestScenarioCount:
