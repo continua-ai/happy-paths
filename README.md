@@ -168,7 +168,7 @@ const loop = createLocalLearningLoop();
 export default createPiTraceExtension({ loop });
 ```
 
-## Naming is parameterized (rebrand-friendly)
+## Project identity overrides
 
 Brand-specific identifiers are centralized in `src/core/projectIdentity.ts` and
 can be overridden per integration.
