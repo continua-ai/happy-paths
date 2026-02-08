@@ -49,6 +49,17 @@ npm run eval:observed-ab:long-horizon -- \
   --strict-no-family-overlap
 ```
 
+Outcome-grounded long-horizon holdout (typed issue taxonomy + abstain, primary
+metric = harmful retry reduction):
+
+```bash
+npm run eval:trajectory-outcome:long-horizon -- \
+  --trace-root ~/.pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469-- \
+  --format pi \
+  --tool-name bash \
+  --strict-no-family-overlap
+```
+
 Custom dataset mix:
 
 ```bash

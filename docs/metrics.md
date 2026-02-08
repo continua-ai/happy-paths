@@ -16,6 +16,19 @@ Track at task-level:
 
 If correctness drops, reject optimization gains.
 
+## Outcome-grounded trajectory evaluator
+
+Failure events are not all equally bad. We distinguish:
+
+- benign probes (expected exploratory misses like uncertain lookups),
+- transient external failures (timeouts/rate limits/network),
+- harmful retries (command mismatch, environment mismatch, missing context),
+- unknown (abstain when confidence is low).
+
+Primary measured gate metric for long-horizon holdouts is relative reduction in
+**harmful retries** (not raw failure count), plus wall-time/token deltas and
+judgeable-coverage thresholds.
+
 ## Suggestion quality metrics
 
 For wrong-turn retrieval quality, track:

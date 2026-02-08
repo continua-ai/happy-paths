@@ -14,6 +14,7 @@ export * from "./core/feasibilityGate.js";
 export * from "./core/feasibilityScenarioPack.js";
 export * from "./core/observedAbGate.js";
 export * from "./core/observedAbBenchmark.js";
+export * from "./core/trajectoryOutcomeGate.js";
 
 export * from "./backends/local/index.js";
 

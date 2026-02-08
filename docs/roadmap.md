@@ -23,6 +23,7 @@
 - near-duplicate clustering for repeated mistakes
 - confidence calibration and quality gates
 - long-horizon measured holdout benchmark (chronological split + leakage check)
+- outcome-grounded trajectory evaluator (typed issue taxonomy + abstain)
 
 ## Phase 2
 

@@ -140,6 +140,36 @@ By default it writes a reproducible report to:
 
 - `.happy-paths/observed-ab-long-horizon/report.json`
 
+## Outcome-grounded holdout (typed issue taxonomy + abstain)
+
+For a stricter, task-trajectory-oriented signal (instead of counting every
+failure as a wrong path), run:
+
+```bash
+npm run eval:trajectory-outcome:long-horizon -- \
+  --trace-root ~/.pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469-- \
+  --format pi \
+  --tool-name bash \
+  --strict-no-family-overlap
+```
+
+This runner adds a typed issue detector over failure→success episodes:
+
+- benign probe (exploratory/uncertain lookups),
+- transient external failure (timeouts/rate limits/network),
+- command mismatch,
+- environment mismatch,
+- missing context,
+- unknown (abstain).
+
+Primary gate metric is **harmful retry reduction** (command/env/context
+mismatches), with additional constraints on wall time, token counts, recovery
+success, and minimum judgeable coverage.
+
+By default it writes:
+
+- `.happy-paths/trajectory-outcome-long-horizon/report.json`
+
 ## Scenario pack inputs
 
 Base fixture:
