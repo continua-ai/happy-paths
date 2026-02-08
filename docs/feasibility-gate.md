@@ -37,6 +37,23 @@ Proxy model:
 This keeps the gate explicit and reproducible while we build stronger replay
 harnesses.
 
+## Interpreting trust
+
+When reductions look high (for example, ~20% wall-time proxy reduction), treat
+single-point deltas as directional and verify confidence intervals.
+
+The trust summary uses paired bootstrap resampling over scenario estimates and
+reports low/median/high intervals for:
+
+- dead-end reduction,
+- wall-time reduction,
+- token-proxy reduction,
+- recovery-success-on,
+- expected repeated dead-ends OFF/ON/avoided.
+
+If intervals remain clearly positive across larger scenario packs, confidence is
+meaningfully stronger than a single aggregate number.
+
 ## Default go/no-go thresholds
 
 - min relative repeated-dead-end reduction: `0.25`
@@ -55,6 +72,21 @@ JSON output:
 
 ```bash
 tsx scripts/run-feasibility-gate.ts --json
+```
+
+Trust-oriented output (paired bootstrap confidence intervals + estimated avoided
+repeated dead-ends):
+
+```bash
+tsx scripts/run-feasibility-gate.ts \
+  --bootstrap-samples 4000 \
+  --confidence-level 0.95
+```
+
+Convenience command for the skateboard E2E trust pass:
+
+```bash
+npm run eval:skateboard
 ```
 
 ## Scenario pack inputs
@@ -116,8 +148,8 @@ and top two risks.
 
 ## One-click sync to website evidence
 
-From the OSS repo, generate run reports + manifest + definitions + big ideas,
-then refresh website evidence artifacts:
+From the OSS repo, generate run reports + manifest + definitions/experiment
+metadata, then refresh website evidence artifacts:
 
 ```bash
 npm run sync:evidence-web

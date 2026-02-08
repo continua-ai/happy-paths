@@ -24,6 +24,7 @@
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/wrong-turn-flow.md">Wrong-turn flow</a> ·
   <a href="docs/feasibility-gate.md">Feasibility gate</a> ·
+  <a href="docs/skateboard-e2e.md">Skateboard E2E</a> ·
   <a href="docs/metrics.md">Metrics</a> ·
   <a href="docs/roadmap.md">Roadmap</a>
 </p>
@@ -193,6 +194,7 @@ Dataset fixture: `testdata/wrong_turn_dataset.json`
 npm run test:wrong-turn-gate
 npm run eval:wrong-turn
 npm run eval:feasibility
+npm run eval:skateboard
 npm run memo:feasibility
 npm run sync:evidence-web
 ```
