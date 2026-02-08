@@ -1,7 +1,7 @@
 # 🤸‍♀️ Happy Paths
 
 <p align="center">
-  <img src="assets/brand/jumping-girl-mark.svg" alt="Happy Paths jumping girl mark" width="220" />
+  <img src="assets/brand/jumping-girl-mark.png" alt="Happy Paths watercolor jumping girl mark" width="220" />
 </p>
 
 <p align="center">
@@ -235,7 +235,7 @@ We intend to support hosted, opt-in sharing:
 
 Primary mark: jumping girl.
 
-- primary mark: `assets/brand/jumping-girl-mark.svg`
+- primary mark: `assets/brand/jumping-girl-mark.png`
 - unicode shorthand: `🤸‍♀️`
 
 ## Credits
