@@ -386,6 +386,18 @@ npm run loop:con1469:sweep-roots -- \
   --min-family-disjoint-pair-count 20
 ```
 
+Model-aware sweep (auto-expands a pi-session root into per-model candidates, so
+you can compare dead-end behavior across LLMs):
+
+```bash
+npm run loop:con1469:sweep-roots -- \
+  --candidate 'happy-paths|.happy-paths|trace|bash' \
+  --expand-pi-models-root ~/.pi/agent/sessions \
+  --min-sessions-per-model 5 \
+  --max-model-candidates 8 \
+  --min-family-disjoint-pair-count 20
+```
+
 Optional Linear update (uses `LINEAR_API_KEY`):
 
 ```bash

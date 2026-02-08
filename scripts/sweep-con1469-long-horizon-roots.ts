@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -23,6 +24,9 @@ type Options = {
   minToolResultCount: number;
   evalRatio: number;
   minFamilyDisjointPairCount: number;
+  expandPiModelsRoot: string | null;
+  minSessionsPerModel: number;
+  maxModelCandidates: number;
 };
 
 type ObservedReport = {
@@ -98,6 +102,9 @@ type SweepSummary = {
     minToolResultCount: number;
     evalRatio: number;
     minFamilyDisjointPairCount: number;
+    expandPiModelsRoot: string | null;
+    minSessionsPerModel: number;
+    maxModelCandidates: number;
   };
   results: CandidateResult[];
   bestByScore: CandidateResult | null;
@@ -157,6 +164,9 @@ function parseArgs(argv: string[]): Options {
     minToolResultCount: 2,
     evalRatio: 0.3,
     minFamilyDisjointPairCount: 20,
+    expandPiModelsRoot: null,
+    minSessionsPerModel: 5,
+    maxModelCandidates: 8,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -195,6 +205,27 @@ function parseArgs(argv: string[]): Options {
     }
     if (token === "--eval-ratio") {
       options.evalRatio = parseNumber(String(value), token);
+      index += 1;
+      continue;
+    }
+    if (token === "--expand-pi-models-root") {
+      options.expandPiModelsRoot = path.resolve(expandHome(String(value)));
+      index += 1;
+      continue;
+    }
+    if (token === "--min-sessions-per-model") {
+      options.minSessionsPerModel = Math.max(1, Number.parseInt(String(value), 10));
+      if (!Number.isFinite(options.minSessionsPerModel)) {
+        throw new Error(`invalid --min-sessions-per-model value: ${String(value)}`);
+      }
+      index += 1;
+      continue;
+    }
+    if (token === "--max-model-candidates") {
+      options.maxModelCandidates = Math.max(1, Number.parseInt(String(value), 10));
+      if (!Number.isFinite(options.maxModelCandidates)) {
+        throw new Error(`invalid --max-model-candidates value: ${String(value)}`);
+      }
       index += 1;
       continue;
     }
@@ -239,6 +270,196 @@ function runCommand(cwd: string, command: string, args: string[]): void {
 async function readJsonFile<T>(filePath: string): Promise<T> {
   const raw = await readFile(filePath, "utf-8");
   return JSON.parse(raw) as T;
+}
+
+async function collectJsonlFiles(rootPath: string): Promise<string[]> {
+  const output: string[] = [];
+
+  async function walk(currentPath: string): Promise<void> {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(currentPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const absolutePath = path.join(currentPath, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absolutePath);
+        continue;
+      }
+
+      if (entry.isFile() && path.extname(entry.name).toLowerCase() === ".jsonl") {
+        output.push(absolutePath);
+      }
+    }
+  }
+
+  await walk(rootPath);
+  return output;
+}
+
+function modelKeyFromRecord(record: Record<string, unknown>): string | null {
+  const type = record.type;
+  if (type === "model_change") {
+    const modelId = record.modelId;
+    const provider = record.provider;
+    if (typeof modelId !== "string" || modelId.length === 0) {
+      return null;
+    }
+    if (typeof provider === "string" && provider.length > 0) {
+      return `${provider}/${modelId}`;
+    }
+    return modelId;
+  }
+
+  if (type === "message") {
+    const model = record.model;
+    const provider = record.provider;
+    if (typeof model !== "string" || model.length === 0) {
+      return null;
+    }
+    if (typeof provider === "string" && provider.length > 0) {
+      return `${provider}/${model}`;
+    }
+    return model;
+  }
+
+  return null;
+}
+
+async function detectSessionModelKey(sessionFilePath: string): Promise<string> {
+  const raw = await readFile(sessionFilePath, "utf-8");
+
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      continue;
+    }
+
+    const modelKey = modelKeyFromRecord(parsed as Record<string, unknown>);
+    if (modelKey) {
+      return modelKey;
+    }
+  }
+
+  return "unknown";
+}
+
+function sanitizeModelLabel(value: string): string {
+  const sanitized = value
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (!sanitized) {
+    return "unknown";
+  }
+  return sanitized.slice(0, 80);
+}
+
+async function buildModelExpandedCandidates(
+  tempDir: string,
+  rootPath: string,
+  minSessionsPerModel: number,
+  maxModelCandidates: number,
+): Promise<Candidate[]> {
+  const sessionFiles = await collectJsonlFiles(rootPath);
+  const byModel = new Map<string, string[]>();
+
+  for (const sessionFile of sessionFiles) {
+    const modelKey = await detectSessionModelKey(sessionFile);
+    const list = byModel.get(modelKey) ?? [];
+    list.push(sessionFile);
+    byModel.set(modelKey, list);
+  }
+
+  const entries = [...byModel.entries()]
+    .filter((entry) => entry[1].length >= minSessionsPerModel)
+    .sort((left, right) => right[1].length - left[1].length)
+    .slice(0, maxModelCandidates);
+
+  const candidates: Candidate[] = [];
+  for (const [index, [modelKey, files]] of entries.entries()) {
+    const rootName = `${String(index + 1).padStart(2, "0")}-${sanitizeModelLabel(modelKey)}`;
+    const candidateRoot = path.join(tempDir, "model-segments", rootName);
+    await mkdir(candidateRoot, { recursive: true });
+
+    for (const [fileIndex, sourcePath] of files.entries()) {
+      const fileName = path.basename(sourcePath);
+      const destinationPath = path.join(
+        candidateRoot,
+        `${String(fileIndex + 1).padStart(4, "0")}-${fileName}`,
+      );
+      await copyFile(sourcePath, destinationPath);
+    }
+
+    candidates.push({
+      label: `model:${modelKey}`,
+      traceRoot: candidateRoot,
+      format: "pi",
+      toolName: "bash",
+    });
+  }
+
+  return candidates;
+}
+
+function dedupeCandidates(candidates: Candidate[]): Candidate[] {
+  const seen = new Set<string>();
+  const output: Candidate[] = [];
+
+  for (const candidate of candidates) {
+    const key = [
+      candidate.label,
+      candidate.traceRoot,
+      candidate.format,
+      candidate.toolName,
+    ].join("|");
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(candidate);
+  }
+
+  return output;
+}
+
+async function resolveCandidates(
+  options: Options,
+  tempDir: string,
+): Promise<Candidate[]> {
+  const candidates = [...options.candidates];
+
+  if (options.expandPiModelsRoot) {
+    candidates.push({
+      label: `pi-root:${path.basename(options.expandPiModelsRoot) || "sessions"}`,
+      traceRoot: options.expandPiModelsRoot,
+      format: "pi",
+      toolName: "bash",
+    });
+
+    const modelCandidates = await buildModelExpandedCandidates(
+      tempDir,
+      options.expandPiModelsRoot,
+      options.minSessionsPerModel,
+      options.maxModelCandidates,
+    );
+    candidates.push(...modelCandidates);
+  }
+
+  return dedupeCandidates(candidates);
 }
 
 function scoreResult(
@@ -321,6 +542,11 @@ function toMarkdown(summary: SweepSummary): string {
   lines.push(
     `- params: minSessionDurationMs=${summary.options.minSessionDurationMs}, minTotalLatencyMs=${summary.options.minTotalLatencyMs}, minToolResultCount=${summary.options.minToolResultCount}, evalRatio=${summary.options.evalRatio}, minFamilyDisjointPairCount=${summary.options.minFamilyDisjointPairCount}`,
   );
+  if (summary.options.expandPiModelsRoot) {
+    lines.push(
+      `- model expansion: root=${summary.options.expandPiModelsRoot}, minSessionsPerModel=${summary.options.minSessionsPerModel}, maxModelCandidates=${summary.options.maxModelCandidates}`,
+    );
+  }
   if (summary.bestByScore) {
     lines.push(
       `- bestByScore: ${summary.bestByScore.candidate.label} (score=${summary.bestByScore.score.toFixed(3)})`,
@@ -362,9 +588,12 @@ async function main(): Promise<void> {
   );
   await mkdir(tempDir, { recursive: true });
 
+  const candidates = await resolveCandidates(options, tempDir);
+  console.log(`Running long-horizon sweep with ${candidates.length} candidate(s)...`);
+
   const results: CandidateResult[] = [];
 
-  for (const candidate of options.candidates) {
+  for (const candidate of candidates) {
     const observedOutPath = path.join(tempDir, `${candidate.label}-observed.json`);
     const trajectoryOutPath = path.join(tempDir, `${candidate.label}-trajectory.json`);
 
@@ -466,6 +695,9 @@ async function main(): Promise<void> {
       minToolResultCount: options.minToolResultCount,
       evalRatio: options.evalRatio,
       minFamilyDisjointPairCount: options.minFamilyDisjointPairCount,
+      expandPiModelsRoot: options.expandPiModelsRoot,
+      minSessionsPerModel: options.minSessionsPerModel,
+      maxModelCandidates: options.maxModelCandidates,
     },
     results,
     bestByScore: results[0] ?? null,
