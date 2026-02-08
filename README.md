@@ -23,6 +23,7 @@
   <a href="https://happypaths.dev">Website</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/wrong-turn-flow.md">Wrong-turn flow</a> ·
+  <a href="docs/feasibility-gate.md">Feasibility gate</a> ·
   <a href="docs/metrics.md">Metrics</a> ·
   <a href="docs/roadmap.md">Roadmap</a>
 </p>
@@ -191,10 +192,14 @@ Dataset fixture: `testdata/wrong_turn_dataset.json`
 ```bash
 npm run test:wrong-turn-gate
 npm run eval:wrong-turn
+npm run eval:feasibility
 ```
 
 CI enforces this gate so suggestion quality remains visible while iterating on
 speed/cost optimizations.
+
+For stage-0 go/no-go validation, use the feasibility gate flow in
+`docs/feasibility-gate.md`.
 
 Beyond LLM token/cost savings, Happy Paths also tracks expensive execution
 surfaces (long-running tools, test suites, CI workflows) so optimization can

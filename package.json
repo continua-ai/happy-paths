@@ -21,6 +21,7 @@
     "test:watch": "vitest",
     "test:wrong-turn-gate": "vitest run tests/wrong-turn-dataset.test.ts",
     "eval:wrong-turn": "tsc -p tsconfig.build.json && node scripts/run-wrong-turn-eval.mjs --strict",
+    "eval:feasibility": "tsc -p tsconfig.build.json && node scripts/run-feasibility-gate.mjs --strict",
     "typecheck": "tsc --noEmit",
     "verify": "biome check . && tsc --noEmit && vitest run",
     "verify:ci": "biome check . && tsc --noEmit && vitest run && node scripts/check-large-source-files.mjs"
