@@ -507,13 +507,7 @@ async function main(): Promise<void> {
       totalLongHorizonSessions: longHorizonSessions.length,
       trainSessionCount: holdout.trainSessions.length,
       evalSessionCount: holdout.evalSessions.length,
-      trainSessionIds: [...trainSessionIds],
-      evalSessionIds: [...evalSessionIds],
       familyOverlap,
-    },
-    sessions: {
-      train: holdout.trainSessions,
-      eval: holdout.evalSessions,
     },
     trainEpisodeCount: trainEpisodes.length,
     evalEpisodeCount: evalEpisodes.length,

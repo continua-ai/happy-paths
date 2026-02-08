@@ -70,6 +70,213 @@ type RunPlan = {
   additionalDatasets: string[];
 };
 
+type ObservedAbInterval = {
+  low: number;
+  median: number;
+  high: number;
+};
+
+type RawObservedAbLongHorizonReport = {
+  schemaVersion: number;
+  generatedAtUtc: string;
+  traceRoot: string;
+  format: string;
+  toolName: string;
+  files: {
+    traceFilesFound: number;
+    traceEventFilesScanned: number;
+    piSessionFilesScanned: number;
+    skippedForFormat: number;
+  };
+  holdout: {
+    minSessionDurationMs: number;
+    minTotalLatencyMs: number;
+    minToolResultCount: number;
+    evalRatio: number;
+    totalSessionsParsed: number;
+    totalLongHorizonSessions: number;
+    trainSessionCount: number;
+    evalSessionCount: number;
+    familyOverlap: {
+      trainFamilyCount: number;
+      evalFamilyCount: number;
+      overlappingFamilyCount: number;
+      overlapRateByEvalFamilies: number;
+      overlapRateByTrainFamilies: number;
+    };
+  };
+  trainEpisodeCount: number;
+  evalEpisodeCount: number;
+  thresholds: {
+    minPairCount: number;
+    minRelativeDeadEndReduction: number;
+    minRelativeWallTimeReduction: number;
+    minRelativeTokenCountReduction: number;
+    minRelativeTokenProxyReduction: number;
+    minRecoverySuccessRateOn: number;
+    maxRecoverySuccessRateDrop: number;
+  };
+  pairing: {
+    minOccurrencesPerFamily: number;
+    requireCrossSession: boolean;
+    maxWallTimeRatio: number;
+    maxTokenCountRatio: number;
+  };
+  pairingDiagnostics: {
+    familiesSeen: number;
+    familiesEligible: number;
+    candidateTransitions: number;
+    droppedSameSession: number;
+    droppedOutlierRatio: number;
+    pairsBuilt: number;
+  };
+  aggregate: {
+    totalPairs: number;
+    totalRetriesOff: number;
+    totalRetriesOn: number;
+    repeatedDeadEndRateOff: number;
+    repeatedDeadEndRateOn: number;
+    recoverySuccessRateOff: number;
+    recoverySuccessRateOn: number;
+    totalWallTimeOffMs: number;
+    totalWallTimeOnMs: number;
+    totalTokenCountOff: number;
+    totalTokenCountOn: number;
+    totalCostOffUsd: number;
+    totalCostOnUsd: number;
+    relativeRepeatedDeadEndRateReduction: number;
+    relativeWallTimeReduction: number;
+    relativeTokenCountReduction: number;
+    absoluteRecoverySuccessRateDelta: number;
+  };
+  trustSummary: {
+    method: string;
+    sampleCount: number;
+    confidenceLevel: number;
+    deadEndReduction: ObservedAbInterval;
+    wallTimeReduction: ObservedAbInterval;
+    tokenCountReduction: ObservedAbInterval;
+    expectedDeadEndsAvoided: ObservedAbInterval;
+  };
+  gateResult: {
+    pass: boolean;
+    failures: string[];
+  };
+};
+
+type ObservedAbEvidence = {
+  schemaVersion: 1;
+  generatedAtUtc: string;
+  run: {
+    id: string;
+    label: string;
+    command: string;
+    dataSource: string;
+    format: string;
+    toolName: string;
+  };
+  methodology: {
+    summary: string;
+    pairingAlgorithm: string[];
+    privacyNote: string;
+  };
+  thresholds: {
+    minPairCount: number;
+    minRelativeDeadEndReduction: number;
+    minRelativeWallTimeReduction: number;
+    minRelativeTokenCountReduction: number;
+    minRecoverySuccessRateOn: number;
+    maxRecoverySuccessRateDrop: number;
+  };
+  pairing: {
+    minOccurrencesPerFamily: number;
+    requireCrossSession: boolean;
+    maxWallTimeRatio: number;
+    maxTokenCountRatio: number;
+  };
+  pairingDiagnostics: {
+    familiesSeen: number;
+    familiesEligible: number;
+    candidateTransitions: number;
+    droppedSameSession: number;
+    droppedOutlierRatio: number;
+    pairsBuilt: number;
+  };
+  aggregate: {
+    totalPairs: number;
+    totalRetriesOff: number;
+    totalRetriesOn: number;
+    repeatedDeadEndRateOff: number;
+    repeatedDeadEndRateOn: number;
+    recoverySuccessRateOff: number;
+    recoverySuccessRateOn: number;
+    totalWallTimeOffMs: number;
+    totalWallTimeOnMs: number;
+    totalTokenCountOff: number;
+    totalTokenCountOn: number;
+    totalCostOffUsd: number;
+    totalCostOnUsd: number;
+    relativeRepeatedDeadEndRateReduction: number;
+    relativeWallTimeReduction: number;
+    relativeTokenCountReduction: number;
+    absoluteRecoverySuccessRateDelta: number;
+  };
+  trustSummary: {
+    method: string;
+    sampleCount: number;
+    confidenceLevel: number;
+    deadEndReduction: ObservedAbInterval;
+    wallTimeReduction: ObservedAbInterval;
+    tokenCountReduction: ObservedAbInterval;
+    expectedDeadEndsAvoided: ObservedAbInterval;
+  };
+  gateResult: {
+    pass: boolean;
+    failures: string[];
+  };
+};
+
+type RawTrajectoryOutcomeReport = {
+  schemaVersion: number;
+  generatedAtUtc: string;
+  traceRoot: string;
+  format: string;
+  toolName: string;
+  files: {
+    traceFilesFound: number;
+    traceEventFilesScanned: number;
+    piSessionFilesScanned: number;
+    skippedForFormat: number;
+  };
+  holdout: {
+    minSessionDurationMs: number;
+    minTotalLatencyMs: number;
+    minToolResultCount: number;
+    evalRatio: number;
+    totalSessionsParsed: number;
+    totalLongHorizonSessions: number;
+    trainSessionCount: number;
+    evalSessionCount: number;
+    familyOverlap: {
+      trainFamilyCount: number;
+      evalFamilyCount: number;
+      overlappingFamilyCount: number;
+      overlapRateByEvalFamilies: number;
+      overlapRateByTrainFamilies: number;
+    };
+  };
+  trainEpisodeCount: number;
+  evalEpisodeCount: number;
+  thresholds: Record<string, unknown>;
+  pairing: Record<string, unknown>;
+  pairingDiagnostics: Record<string, unknown>;
+  aggregate: Record<string, unknown>;
+  trustSummary: Record<string, unknown>;
+  gateResult: {
+    pass: boolean;
+    failures: string[];
+  };
+};
 const DEFAULT_PI_SESSION_ROOT = path.join(
   process.env.HOME || "",
   ".pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469--",
@@ -286,6 +493,120 @@ function sanitizeDatasetSource(value: string): string {
   return value;
 }
 
+function runIdFromGeneratedAt(value: string): string {
+  return value
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z")
+    .toLowerCase();
+}
+
+function buildObservedAbRunCommand(raw: RawObservedAbLongHorizonReport): string {
+  return [
+    "npx tsx scripts/run-observed-ab-long-horizon.ts",
+    `--trace-root ${sanitizeDatasetSource(raw.traceRoot)}`,
+    `--format ${raw.format}`,
+    `--tool-name ${raw.toolName}`,
+    `--min-session-duration-ms ${raw.holdout.minSessionDurationMs}`,
+    `--min-total-latency-ms ${raw.holdout.minTotalLatencyMs}`,
+    `--min-tool-result-count ${raw.holdout.minToolResultCount}`,
+    `--eval-ratio ${raw.holdout.evalRatio}`,
+    "--json",
+  ].join(" ");
+}
+
+function toObservedAbEvidence(raw: RawObservedAbLongHorizonReport): ObservedAbEvidence {
+  return {
+    schemaVersion: 1,
+    generatedAtUtc: raw.generatedAtUtc,
+    run: {
+      id: `observed-ab-long-horizon-${runIdFromGeneratedAt(raw.generatedAtUtc)}`,
+      label: "Observed A/B long-horizon holdout (measured OFF vs ON)",
+      command: buildObservedAbRunCommand(raw),
+      dataSource: sanitizeDatasetSource(raw.traceRoot),
+      format: raw.format,
+      toolName: raw.toolName,
+    },
+    methodology: {
+      summary:
+        "Measured OFF/ON comparisons built from repeated recovery families across sessions. OFF and ON are both observed episodes (no modeled replay in this section).",
+      pairingAlgorithm: [
+        "Extract recovery episodes from trace events (failure-to-success chains).",
+        "Group episodes by normalized family signature (command/error pattern).",
+        "Split long-horizon sessions chronologically into train/eval and evaluate only eval episodes.",
+        "Build adjacent OFF→ON transitions per family, preferring cross-session pairs.",
+        "Drop outliers with wall-time/token-count ratio filters.",
+        "Compute aggregate measured deltas and paired-bootstrap confidence intervals.",
+      ],
+      privacyNote:
+        "Public view includes only aggregate metrics and diagnostics; raw private trace content is not displayed.",
+    },
+    thresholds: {
+      minPairCount: raw.thresholds.minPairCount,
+      minRelativeDeadEndReduction: raw.thresholds.minRelativeDeadEndReduction,
+      minRelativeWallTimeReduction: raw.thresholds.minRelativeWallTimeReduction,
+      minRelativeTokenCountReduction: raw.thresholds.minRelativeTokenCountReduction,
+      minRecoverySuccessRateOn: raw.thresholds.minRecoverySuccessRateOn,
+      maxRecoverySuccessRateDrop: raw.thresholds.maxRecoverySuccessRateDrop,
+    },
+    pairing: {
+      minOccurrencesPerFamily: raw.pairing.minOccurrencesPerFamily,
+      requireCrossSession: true,
+      maxWallTimeRatio: raw.pairing.maxWallTimeRatio,
+      maxTokenCountRatio: raw.pairing.maxTokenCountRatio,
+    },
+    pairingDiagnostics: raw.pairingDiagnostics,
+    aggregate: {
+      totalPairs: raw.aggregate.totalPairs,
+      totalRetriesOff: raw.aggregate.totalRetriesOff,
+      totalRetriesOn: raw.aggregate.totalRetriesOn,
+      repeatedDeadEndRateOff: raw.aggregate.repeatedDeadEndRateOff,
+      repeatedDeadEndRateOn: raw.aggregate.repeatedDeadEndRateOn,
+      recoverySuccessRateOff: raw.aggregate.recoverySuccessRateOff,
+      recoverySuccessRateOn: raw.aggregate.recoverySuccessRateOn,
+      totalWallTimeOffMs: raw.aggregate.totalWallTimeOffMs,
+      totalWallTimeOnMs: raw.aggregate.totalWallTimeOnMs,
+      totalTokenCountOff: raw.aggregate.totalTokenCountOff,
+      totalTokenCountOn: raw.aggregate.totalTokenCountOn,
+      totalCostOffUsd: raw.aggregate.totalCostOffUsd,
+      totalCostOnUsd: raw.aggregate.totalCostOnUsd,
+      relativeRepeatedDeadEndRateReduction:
+        raw.aggregate.relativeRepeatedDeadEndRateReduction,
+      relativeWallTimeReduction: raw.aggregate.relativeWallTimeReduction,
+      relativeTokenCountReduction: raw.aggregate.relativeTokenCountReduction,
+      absoluteRecoverySuccessRateDelta: raw.aggregate.absoluteRecoverySuccessRateDelta,
+    },
+    trustSummary: {
+      method: raw.trustSummary.method,
+      sampleCount: raw.trustSummary.sampleCount,
+      confidenceLevel: raw.trustSummary.confidenceLevel,
+      deadEndReduction: raw.trustSummary.deadEndReduction,
+      wallTimeReduction: raw.trustSummary.wallTimeReduction,
+      tokenCountReduction: raw.trustSummary.tokenCountReduction,
+      expectedDeadEndsAvoided: raw.trustSummary.expectedDeadEndsAvoided,
+    },
+    gateResult: raw.gateResult,
+  };
+}
+
+function sanitizeTrajectoryOutcomeReportForWeb(
+  raw: RawTrajectoryOutcomeReport,
+): RawTrajectoryOutcomeReport {
+  return {
+    ...raw,
+    holdout: {
+      minSessionDurationMs: raw.holdout.minSessionDurationMs,
+      minTotalLatencyMs: raw.holdout.minTotalLatencyMs,
+      minToolResultCount: raw.holdout.minToolResultCount,
+      evalRatio: raw.holdout.evalRatio,
+      totalSessionsParsed: raw.holdout.totalSessionsParsed,
+      totalLongHorizonSessions: raw.holdout.totalLongHorizonSessions,
+      trainSessionCount: raw.holdout.trainSessionCount,
+      evalSessionCount: raw.holdout.evalSessionCount,
+      familyOverlap: raw.holdout.familyOverlap,
+    },
+  };
+}
+
 function buildExperimentPlan(
   steps: RunManifestExperimentStep[],
 ): RunManifestExperimentPlan {
@@ -406,6 +727,7 @@ async function main(): Promise<void> {
     const reportFilename = `r${index + 1}-${plan.idBase}-${slug}.json`;
     const reportPath = path.join(reportsRoot, reportFilename);
 
+    const runDataDir = path.join(tempDir, `feasibility-run-${runId}`);
     const runArgs = [
       "tsx",
       "scripts/run-feasibility-gate.ts",
@@ -413,7 +735,7 @@ async function main(): Promise<void> {
       "--dataset",
       "testdata/wrong_turn_dataset.json",
       "--data-dir",
-      `.happy-paths/evidence-${runId}`,
+      runDataDir,
       "--session-prefix",
       runId,
     ];
@@ -464,11 +786,52 @@ async function main(): Promise<void> {
   const manifestPath = path.join(evidenceRoot, "run-manifest.json");
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
 
-  const trajectoryEvidencePath = path.join(
+  const observedRawReportPath = path.join(tempDir, "observed_ab_long_horizon_raw.json");
+  runCommand(repoRoot, "npx", [
+    "tsx",
+    "scripts/run-observed-ab-long-horizon.ts",
+    "--trace-root",
+    ".happy-paths",
+    "--format",
+    "trace",
+    "--tool-name",
+    "bash",
+    "--min-session-duration-ms",
+    "1000",
+    "--min-total-latency-ms",
+    "0",
+    "--min-tool-result-count",
+    "2",
+    "--eval-ratio",
+    "0.3",
+    "--out",
+    observedRawReportPath,
+  ]);
+
+  const observedRawReport = JSON.parse(
+    await readFile(observedRawReportPath, "utf-8"),
+  ) as RawObservedAbLongHorizonReport;
+  if (observedRawReport.schemaVersion !== 1) {
+    throw new Error(
+      `unsupported observed A/B schema version: ${observedRawReport.schemaVersion}`,
+    );
+  }
+
+  const observedEvidencePath = path.join(
     webRepoRoot,
-    "evidence/trajectory_outcome/report.json",
+    "evidence/observed_ab/report.json",
   );
-  await mkdir(path.dirname(trajectoryEvidencePath), { recursive: true });
+  await mkdir(path.dirname(observedEvidencePath), { recursive: true });
+  await writeFile(
+    observedEvidencePath,
+    `${JSON.stringify(toObservedAbEvidence(observedRawReport), null, 2)}\n`,
+    "utf-8",
+  );
+
+  const trajectoryRawReportPath = path.join(
+    tempDir,
+    "trajectory_outcome_long_horizon_raw.json",
+  );
   runCommand(repoRoot, "npx", [
     "tsx",
     "scripts/run-trajectory-outcome-long-horizon.ts",
@@ -487,8 +850,28 @@ async function main(): Promise<void> {
     "--eval-ratio",
     "0.3",
     "--out",
-    trajectoryEvidencePath,
+    trajectoryRawReportPath,
   ]);
+
+  const trajectoryRawReport = JSON.parse(
+    await readFile(trajectoryRawReportPath, "utf-8"),
+  ) as RawTrajectoryOutcomeReport;
+  if (trajectoryRawReport.schemaVersion !== 1) {
+    throw new Error(
+      `unsupported trajectory schema version: ${trajectoryRawReport.schemaVersion}`,
+    );
+  }
+
+  const trajectoryEvidencePath = path.join(
+    webRepoRoot,
+    "evidence/trajectory_outcome/report.json",
+  );
+  await mkdir(path.dirname(trajectoryEvidencePath), { recursive: true });
+  await writeFile(
+    trajectoryEvidencePath,
+    `${JSON.stringify(sanitizeTrajectoryOutcomeReportForWeb(trajectoryRawReport), null, 2)}\n`,
+    "utf-8",
+  );
 
   runCommand(webRepoRoot, "npm", ["run", "generate:evidence"]);
 
@@ -506,6 +889,7 @@ async function main(): Promise<void> {
         generatedAtUtc,
         runs: runPlans.length,
         manifestPath,
+        observedEvidencePath,
         trajectoryEvidencePath,
         publicDataPath,
         latestRunId: publicData.runs?.[publicData.runs.length - 1]?.id ?? null,

@@ -12,6 +12,8 @@ type Format = "auto" | "trace" | "pi";
 
 type Scope = "personal" | "team" | "public";
 
+type PrimaryLane = "full_eval" | "family_disjoint_eval";
+
 type ParsedOptions = {
   traceRoot: string;
   format: Format;
@@ -22,6 +24,8 @@ type ParsedOptions = {
   minTotalLatencyMs: number;
   minToolResultCount: number;
   evalRatio: number;
+  primaryLane: PrimaryLane;
+  maxOverlapRateByEvalFamilies?: number;
   strictNoFamilyOverlap: boolean;
   strict: boolean;
   json: boolean;
@@ -90,6 +94,13 @@ function parseScope(value: string): Scope {
   throw new Error(`invalid --scope value: ${value}`);
 }
 
+function parsePrimaryLane(value: string): PrimaryLane {
+  if (value === "full_eval" || value === "family_disjoint_eval") {
+    return value;
+  }
+  throw new Error(`invalid --primary-lane value: ${value}`);
+}
+
 function normalizeEvalRatio(value: number | undefined): number {
   if (value === undefined) {
     return 0.3;
@@ -111,6 +122,8 @@ function parseArgs(argv: string[]): ParsedOptions {
     minTotalLatencyMs: 5 * 60 * 1000,
     minToolResultCount: 8,
     evalRatio: 0.3,
+    primaryLane: "family_disjoint_eval",
+    maxOverlapRateByEvalFamilies: undefined,
     strictNoFamilyOverlap: false,
     strict: false,
     json: false,
@@ -168,6 +181,20 @@ function parseArgs(argv: string[]): ParsedOptions {
     }
     if (token === "--eval-ratio") {
       options.evalRatio = normalizeEvalRatio(parseFloatOrUndefined(value));
+      index += 1;
+      continue;
+    }
+    if (token === "--primary-lane") {
+      options.primaryLane = parsePrimaryLane(String(value));
+      index += 1;
+      continue;
+    }
+    if (token === "--max-overlap-rate-by-eval-families") {
+      const parsed = parseFloatOrUndefined(value);
+      if (parsed === undefined) {
+        throw new Error("missing value for --max-overlap-rate-by-eval-families");
+      }
+      options.maxOverlapRateByEvalFamilies = Math.max(0, Math.min(1, parsed));
       index += 1;
       continue;
     }
@@ -343,12 +370,20 @@ function sessionTraceFileLabel(traceFiles: Set<string>): string {
 function toExitCode(
   options: ParsedOptions,
   familyOverlapCount: number,
+  overlapRateByEvalFamilies: number,
   gatePass: boolean,
 ): number {
   let exitCode = 0;
 
   if (options.strictNoFamilyOverlap && familyOverlapCount > 0) {
     exitCode = 3;
+  }
+
+  if (
+    options.maxOverlapRateByEvalFamilies !== undefined &&
+    overlapRateByEvalFamilies > options.maxOverlapRateByEvalFamilies
+  ) {
+    exitCode = exitCode === 0 ? 4 : exitCode;
   }
 
   if (options.strict && !gatePass) {
@@ -366,6 +401,7 @@ async function main(): Promise<void> {
   }
 
   const {
+    buildFamilyDisjointEvalSlice,
     buildTraceEventsFromPiSessionRecords,
     evaluateTrajectoryOutcomeGate,
     extractTrajectoryOutcomeEpisodes,
@@ -473,21 +509,69 @@ async function main(): Promise<void> {
   const evalEpisodes = extractTrajectoryOutcomeEpisodes(evalEvents);
   const familyOverlap = summarizeFamilyOverlap(trainEpisodes, evalEpisodes);
 
-  const report = evaluateTrajectoryOutcomeGate(
+  const pairingOptions = {
+    minOccurrencesPerFamily: options.pairing.minOccurrencesPerFamily,
+    requireCrossSession: options.pairing.requireCrossSession,
+    maxWallTimeRatio: options.pairing.maxWallTimeRatio,
+    maxTokenCountRatio: options.pairing.maxTokenCountRatio,
+  };
+
+  const trustOptions = {
+    bootstrapSamples: options.trust.bootstrapSamples,
+    confidenceLevel: options.trust.confidenceLevel,
+    seed: options.trust.seed,
+  };
+
+  const fullEvalReport = evaluateTrajectoryOutcomeGate(
     evalEpisodes,
     options.thresholds,
-    {
-      minOccurrencesPerFamily: options.pairing.minOccurrencesPerFamily,
-      requireCrossSession: options.pairing.requireCrossSession,
-      maxWallTimeRatio: options.pairing.maxWallTimeRatio,
-      maxTokenCountRatio: options.pairing.maxTokenCountRatio,
-    },
-    {
-      bootstrapSamples: options.trust.bootstrapSamples,
-      confidenceLevel: options.trust.confidenceLevel,
-      seed: options.trust.seed,
-    },
+    pairingOptions,
+    trustOptions,
   );
+
+  const disjointSlice = buildFamilyDisjointEvalSlice(trainEpisodes, evalEpisodes);
+
+  const familyDisjointEvalReport = evaluateTrajectoryOutcomeGate(
+    disjointSlice.episodes,
+    options.thresholds,
+    pairingOptions,
+    trustOptions,
+  );
+
+  const laneReports = {
+    full_eval: {
+      episodeCount: evalEpisodes.length,
+      removedEpisodeCount: 0,
+      removedEvalFamilyCount: 0,
+      disjointEvalFamilyCount: familyOverlap.evalFamilyCount,
+      report: fullEvalReport,
+    },
+    family_disjoint_eval: {
+      episodeCount: disjointSlice.episodes.length,
+      removedEpisodeCount: disjointSlice.stats.removedEpisodeCount,
+      removedEvalFamilyCount: disjointSlice.stats.removedEvalFamilyCount,
+      disjointEvalFamilyCount: disjointSlice.stats.disjointEvalFamilyCount,
+      report: familyDisjointEvalReport,
+    },
+  };
+
+  const primaryLaneReport = laneReports[options.primaryLane];
+
+  const overlapRatePass =
+    options.maxOverlapRateByEvalFamilies === undefined ||
+    familyOverlap.overlapRateByEvalFamilies <= options.maxOverlapRateByEvalFamilies;
+
+  const gateFailures = [...primaryLaneReport.report.gateResult.failures];
+  if (!overlapRatePass && options.maxOverlapRateByEvalFamilies !== undefined) {
+    gateFailures.push(
+      `family overlap rate ${familyOverlap.overlapRateByEvalFamilies.toFixed(3)} > ${options.maxOverlapRateByEvalFamilies.toFixed(3)}`,
+    );
+  }
+
+  const gateResult = {
+    pass: primaryLaneReport.report.gateResult.pass && overlapRatePass,
+    failures: gateFailures,
+  };
 
   const payload = {
     schemaVersion: 1,
@@ -517,15 +601,48 @@ async function main(): Promise<void> {
         overlapRateByEvalFamilies: familyOverlap.overlapRateByEvalFamilies,
         overlapRateByTrainFamilies: familyOverlap.overlapRateByTrainFamilies,
       },
+      familyDisjointSlice: disjointSlice.stats,
+      overlapRateConstraint: {
+        maxOverlapRateByEvalFamilies: options.maxOverlapRateByEvalFamilies,
+        pass: overlapRatePass,
+      },
     },
     trainEpisodeCount: trainEpisodes.length,
     evalEpisodeCount: evalEpisodes.length,
-    thresholds: report.thresholds,
-    pairing: report.pairing,
-    pairingDiagnostics: report.pairingDiagnostics,
-    aggregate: report.aggregate,
-    trustSummary: report.trustSummary,
-    gateResult: report.gateResult,
+    primaryLane: options.primaryLane,
+    laneReports: {
+      full_eval: {
+        episodeCount: laneReports.full_eval.episodeCount,
+        removedEpisodeCount: laneReports.full_eval.removedEpisodeCount,
+        removedEvalFamilyCount: laneReports.full_eval.removedEvalFamilyCount,
+        disjointEvalFamilyCount: laneReports.full_eval.disjointEvalFamilyCount,
+        thresholds: laneReports.full_eval.report.thresholds,
+        pairing: laneReports.full_eval.report.pairing,
+        pairingDiagnostics: laneReports.full_eval.report.pairingDiagnostics,
+        aggregate: laneReports.full_eval.report.aggregate,
+        trustSummary: laneReports.full_eval.report.trustSummary,
+        gateResult: laneReports.full_eval.report.gateResult,
+      },
+      family_disjoint_eval: {
+        episodeCount: laneReports.family_disjoint_eval.episodeCount,
+        removedEpisodeCount: laneReports.family_disjoint_eval.removedEpisodeCount,
+        removedEvalFamilyCount: laneReports.family_disjoint_eval.removedEvalFamilyCount,
+        disjointEvalFamilyCount:
+          laneReports.family_disjoint_eval.disjointEvalFamilyCount,
+        thresholds: laneReports.family_disjoint_eval.report.thresholds,
+        pairing: laneReports.family_disjoint_eval.report.pairing,
+        pairingDiagnostics: laneReports.family_disjoint_eval.report.pairingDiagnostics,
+        aggregate: laneReports.family_disjoint_eval.report.aggregate,
+        trustSummary: laneReports.family_disjoint_eval.report.trustSummary,
+        gateResult: laneReports.family_disjoint_eval.report.gateResult,
+      },
+    },
+    thresholds: primaryLaneReport.report.thresholds,
+    pairing: primaryLaneReport.report.pairing,
+    pairingDiagnostics: primaryLaneReport.report.pairingDiagnostics,
+    aggregate: primaryLaneReport.report.aggregate,
+    trustSummary: primaryLaneReport.report.trustSummary,
+    gateResult,
   };
 
   const outPath = resolve(process.cwd(), options.out);
@@ -561,36 +678,69 @@ async function main(): Promise<void> {
         `(${(familyOverlap.overlapRateByEvalFamilies * 100).toFixed(1)}% of eval families)`,
       ].join(" "),
     );
-    console.log(`- eval episodes: ${evalEpisodes.length}`);
-    console.log(`- pairs: ${report.aggregate.totalPairs}`);
+    console.log(`- eval episodes (full): ${laneReports.full_eval.episodeCount}`);
     console.log(
       [
-        "- harmful retries per pair (OFF -> ON):",
-        `${report.aggregate.harmfulRetryRateOff.toFixed(3)} ->`,
-        `${report.aggregate.harmfulRetryRateOn.toFixed(3)}`,
-        `(relative reduction ${report.aggregate.relativeHarmfulRetryReduction.toFixed(3)})`,
+        "- eval episodes (family-disjoint):",
+        `${laneReports.family_disjoint_eval.episodeCount}`,
+        `(removed ${laneReports.family_disjoint_eval.removedEpisodeCount} episodes from ${laneReports.family_disjoint_eval.removedEvalFamilyCount} overlapping families)`,
       ].join(" "),
     );
+    console.log(`- primary lane: ${options.primaryLane}`);
+
+    const fullAggregate = laneReports.full_eval.report.aggregate;
+    const disjointAggregate = laneReports.family_disjoint_eval.report.aggregate;
+
     console.log(
       [
-        "- measured totals (OFF -> ON):",
-        `${(report.aggregate.totalWallTimeOffMs / 1000).toFixed(2)}s ->`,
-        `${(report.aggregate.totalWallTimeOnMs / 1000).toFixed(2)}s,`,
-        `${report.aggregate.totalTokenCountOff.toFixed(0)} ->`,
-        `${report.aggregate.totalTokenCountOn.toFixed(0)} tokens`,
+        "- full lane harmful retries per pair (OFF -> ON):",
+        `${fullAggregate.harmfulRetryRateOff.toFixed(3)} ->`,
+        `${fullAggregate.harmfulRetryRateOn.toFixed(3)}`,
+        `(relative reduction ${fullAggregate.relativeHarmfulRetryReduction.toFixed(3)})`,
       ].join(" "),
     );
+
     console.log(
       [
-        "- judgeable coverage (OFF / ON):",
-        `${(report.aggregate.judgeableCoverageOff * 100).toFixed(1)}% /`,
-        `${(report.aggregate.judgeableCoverageOn * 100).toFixed(1)}%`,
+        "- disjoint lane harmful retries per pair (OFF -> ON):",
+        `${disjointAggregate.harmfulRetryRateOff.toFixed(3)} ->`,
+        `${disjointAggregate.harmfulRetryRateOn.toFixed(3)}`,
+        `(relative reduction ${disjointAggregate.relativeHarmfulRetryReduction.toFixed(3)})`,
       ].join(" "),
     );
-    console.log(`- gate pass: ${report.gateResult.pass}`);
-    if (!report.gateResult.pass) {
+
+    console.log(
+      [
+        "- primary lane measured totals (OFF -> ON):",
+        `${(primaryLaneReport.report.aggregate.totalWallTimeOffMs / 1000).toFixed(2)}s ->`,
+        `${(primaryLaneReport.report.aggregate.totalWallTimeOnMs / 1000).toFixed(2)}s,`,
+        `${primaryLaneReport.report.aggregate.totalTokenCountOff.toFixed(0)} ->`,
+        `${primaryLaneReport.report.aggregate.totalTokenCountOn.toFixed(0)} tokens`,
+      ].join(" "),
+    );
+
+    console.log(
+      [
+        "- primary lane judgeable coverage (OFF / ON):",
+        `${(primaryLaneReport.report.aggregate.judgeableCoverageOff * 100).toFixed(1)}% /`,
+        `${(primaryLaneReport.report.aggregate.judgeableCoverageOn * 100).toFixed(1)}%`,
+      ].join(" "),
+    );
+
+    if (options.maxOverlapRateByEvalFamilies !== undefined) {
+      console.log(
+        [
+          "- overlap rate constraint:",
+          `${familyOverlap.overlapRateByEvalFamilies.toFixed(3)} <= ${options.maxOverlapRateByEvalFamilies.toFixed(3)}`,
+          `(pass=${overlapRatePass})`,
+        ].join(" "),
+      );
+    }
+
+    console.log(`- gate pass: ${gateResult.pass}`);
+    if (!gateResult.pass) {
       console.log("- gate failures:");
-      for (const failure of report.gateResult.failures) {
+      for (const failure of gateResult.failures) {
         console.log(`  - ${failure}`);
       }
     }
@@ -600,7 +750,8 @@ async function main(): Promise<void> {
   const exitCode = toExitCode(
     options,
     familyOverlap.overlappingFamilyCount,
-    report.gateResult.pass,
+    familyOverlap.overlapRateByEvalFamilies,
+    gateResult.pass,
   );
   if (exitCode !== 0) {
     process.exitCode = exitCode;

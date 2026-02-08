@@ -70,6 +70,160 @@ describe("trajectory outcome gate", () => {
     expect(issue?.harmful).toBe(true);
   });
 
+  it("treats empty probe outputs as benign", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "empty-probe",
+        type: "tool_result",
+        payload: {
+          command: 'curl -sS https://example.com | rg -n "missing"',
+          output: "",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("benign_probe");
+    expect(issue?.harmful).toBe(false);
+  });
+
+  it("classifies policy-required flag errors as command mismatch", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "missing-condition-flag",
+        type: "tool_result",
+        payload: {
+          command:
+            "gcloud projects add-iam-policy-binding thoughter --member='serviceAccount:test' --role='roles/viewer' --quiet",
+          output:
+            "ERROR: (gcloud.projects.add-iam-policy-binding) Adding a binding without specifying a condition to a policy containing conditions is prohibited in non-interactive mode. Run the command again with --condition.",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("command_mismatch");
+    expect(issue?.harmful).toBe(true);
+  });
+
+  it("classifies merge policy blocks as missing context", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "merge-policy-blocked",
+        type: "tool_result",
+        payload: {
+          command: "gh pr merge 9 --repo continua-ai/happy-paths --squash",
+          output:
+            "X Pull request continua-ai/happy-paths#9 is not mergeable: the base branch policy prohibits the merge.",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("missing_context");
+    expect(issue?.harmful).toBe(true);
+  });
+
+  it("classifies API auth failures as missing context", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "search-console-403",
+        type: "tool_result",
+        payload: {
+          command:
+            "python3 scripts/search_console_report.py --site sc-domain:happypaths.dev",
+          output:
+            'GET https://searchconsole.googleapis.com/webmasters/v3/sites failed: HTTP 403 {"error":{"status":"PERMISSION_DENIED"}}',
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("missing_context");
+    expect(issue?.harmful).toBe(true);
+  });
+
+  it("classifies vertex traceback failures as transient external", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "vertex-traceback",
+        type: "tool_result",
+        payload: {
+          command:
+            "gcloud auth print-access-token >/tmp/token && python3 /tmp/generate_vertex_image.py --model gemini-2.5-flash-image",
+          output: "Traceback (most recent call last):\nHTTP Error 401: Unauthorized",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("transient_external");
+    expect(issue?.harmful).toBe(false);
+  });
+
+  it("classifies repo-path misses as missing context", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "missing-github-dir",
+        type: "tool_result",
+        payload: {
+          command:
+            "cd /Users/dpetrou/src/happy-paths-web && find .github -maxdepth 3 -type f -name '*.yml'",
+          output: "find: .github: No such file or directory",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("missing_context");
+    expect(issue?.harmful).toBe(true);
+  });
+
+  it("classifies externally managed pip failures as environment mismatch", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "pip-managed-env",
+        type: "tool_result",
+        payload: {
+          command: "python3 -m pip install --quiet pypdf",
+          output: "error: externally-managed-environment",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("environment_mismatch");
+    expect(issue?.harmful).toBe(true);
+  });
+
   it("measures harmful retry reductions across paired episodes", () => {
     const events: TraceEvent[] = [
       event({

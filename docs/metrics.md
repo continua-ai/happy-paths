@@ -29,6 +29,27 @@ Primary measured gate metric for long-horizon holdouts is relative reduction in
 **harmful retries** (not raw failure count), plus wall-time/token deltas and
 judgeable-coverage thresholds.
 
+For trajectory holdouts, evaluate and report both lanes:
+
+- `full_eval` (all eval episodes),
+- `family_disjoint_eval` (families unseen in train).
+
+Use `family_disjoint_eval` as the default primary claim lane, with optional
+overlap-rate caps for stricter evidence hygiene.
+
+Calibration loop for this evaluator:
+
+1. generate labeled sample (`npm run eval:trajectory-calibration-sample`),
+2. prepare dual-review packets
+   (`npm run eval:trajectory-calibration:prepare-dual-review`),
+3. label with rubric (`docs/trajectory-calibration-rubric.md`),
+4. adjudicate reviewer outputs
+   (`npm run eval:trajectory-calibration:adjudicate`),
+5. score confusion/harmful/abstain metrics
+   (`npm run eval:trajectory-calibration-summary`),
+6. run threshold sweep for initial operating point selection
+   (`npm run eval:trajectory-calibration:tune-thresholds`).
+
 ## Suggestion quality metrics
 
 For wrong-turn retrieval quality, track:

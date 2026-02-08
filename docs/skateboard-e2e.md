@@ -57,8 +57,12 @@ npm run eval:trajectory-outcome:long-horizon -- \
   --trace-root ~/.pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469-- \
   --format pi \
   --tool-name bash \
-  --strict-no-family-overlap
+  --primary-lane family_disjoint_eval \
+  --max-overlap-rate-by-eval-families 0.10
 ```
+
+This report includes both `full_eval` and `family_disjoint_eval` lanes.
+Default primary lane is `family_disjoint_eval`.
 
 Custom dataset mix:
 
