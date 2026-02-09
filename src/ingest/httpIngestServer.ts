@@ -112,7 +112,10 @@ export function createHttpIngestServer(options: IngestServerOptions) {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
 
-      if (request.method === "GET" && url.pathname === "/healthz") {
+      if (
+        request.method === "GET" &&
+        (url.pathname === "/healthz" || url.pathname === "/healthz/")
+      ) {
         json(response, 200, { ok: true });
         return;
       }

@@ -34,7 +34,7 @@ bytes.
 
 ### Health
 
-`GET /healthz`
+`GET /healthz` (and `GET /healthz/`)
 
 - Response: `200 {"ok": true}`
 
