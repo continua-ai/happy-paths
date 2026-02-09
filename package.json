@@ -15,7 +15,7 @@
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
     "format": "biome format --write .",
-    "guardrails": "tsx scripts/check-large-source-files.ts",
+    "guardrails": "tsx scripts/check-large-source-files.ts && tsx scripts/check-no-authored-js.ts && tsx scripts/check-no-sleeps.ts",
     "lint": "biome check .",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -40,7 +40,7 @@
     "loop:con1469:sweep-roots": "tsx scripts/sweep-con1469-long-horizon-roots.ts",
     "typecheck": "tsc --noEmit",
     "verify": "biome check . && tsc --noEmit && vitest run",
-    "verify:ci": "biome check . && tsc --noEmit && vitest run && tsx scripts/check-large-source-files.ts"
+    "verify:ci": "biome check . && tsc --noEmit && vitest run && npm run guardrails"
   },
   "repository": {
     "type": "git",
