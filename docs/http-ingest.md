@@ -147,7 +147,7 @@ Environment variables:
   - `HAPPY_PATHS_INGEST_GCS_PREFIX` (optional key prefix)
 - Auth:
   - `HAPPY_PATHS_TEAM_ID` + `HAPPY_PATHS_TEAM_TOKEN` (single-tenant)
-    - OR `HAPPY_PATHS_TEAM_TOKENS_JSON` (multi-tenant)
+    - OR `HAPPY_PATHS_TEAM_TOKENS_JSON` (multi-tenant token->team mapping)
 - Limits:
   - `HAPPY_PATHS_MAX_BODY_BYTES` (defaults to 50MB)
 

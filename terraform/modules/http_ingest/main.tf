@@ -69,6 +69,26 @@ resource "google_secret_manager_secret_iam_member" "team_token_accessor" {
   member    = "serviceAccount:${google_service_account.ingest.email}"
 }
 
+resource "google_secret_manager_secret" "team_tokens_json" {
+  count = var.team_tokens_json_secret_name != "" ? 1 : 0
+
+  secret_id = var.team_tokens_json_secret_name
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.secretmanager_api]
+}
+
+resource "google_secret_manager_secret_iam_member" "team_tokens_json_accessor" {
+  count = var.team_tokens_json_secret_name != "" ? 1 : 0
+
+  secret_id = google_secret_manager_secret.team_tokens_json[0].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.ingest.email}"
+}
+
 resource "google_cloud_run_v2_service" "ingest" {
   name     = var.service_name
   location = var.region
@@ -113,12 +133,28 @@ resource "google_cloud_run_v2_service" "ingest" {
         value = tostring(var.max_body_bytes)
       }
 
-      env {
-        name = "HAPPY_PATHS_TEAM_TOKEN"
-        value_source {
-          secret_key_ref {
-            secret  = google_secret_manager_secret.team_token.secret_id
-            version = "latest"
+      dynamic "env" {
+        for_each = var.team_tokens_json_secret_name != "" ? [1] : []
+        content {
+          name = "HAPPY_PATHS_TEAM_TOKENS_JSON"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.team_tokens_json[0].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.team_tokens_json_secret_name == "" ? [1] : []
+        content {
+          name = "HAPPY_PATHS_TEAM_TOKEN"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.team_token.secret_id
+              version = "latest"
+            }
           }
         }
       }

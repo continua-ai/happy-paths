@@ -43,9 +43,15 @@ variable "team_id" {
 }
 
 variable "team_token_secret_name" {
-  description = "Secret Manager secret name storing HAPPY_PATHS_TEAM_TOKEN."
+  description = "Secret Manager secret name storing HAPPY_PATHS_TEAM_TOKEN (single-tenant mode)."
   type        = string
   default     = "happy-paths-team-token"
+}
+
+variable "team_tokens_json_secret_name" {
+  description = "Optional Secret Manager secret name storing HAPPY_PATHS_TEAM_TOKENS_JSON (multi-tenant mode). If set, the service will use token->team mapping and ignore HAPPY_PATHS_TEAM_TOKEN."
+  type        = string
+  default     = ""
 }
 
 variable "gcs_prefix" {
