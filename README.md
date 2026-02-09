@@ -27,6 +27,7 @@
   <a href="docs/feasibility-gate.md">Feasibility gate</a> ·
   <a href="docs/skateboard-e2e.md">Skateboard E2E</a> ·
   <a href="docs/metrics.md">Metrics</a> ·
+  <a href="docs/related-work.md">Related work</a> ·
   <a href="docs/roadmap.md">Roadmap</a>
 </p>
 
