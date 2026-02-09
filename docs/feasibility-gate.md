@@ -136,6 +136,15 @@ This runner:
    with `--strict-no-family-overlap`,
 4. evaluates measured OFF vs ON episode pairs only on the eval split.
 
+It also emits first-class stratified slices in the report JSON:
+
+- `strata.model`
+- `strata.toolSurface`
+- `strata.modelToolSurface`
+
+Each slice includes pair/episode/session counts, per-slice aggregates, and
+per-slice gate pass/failure details (useful for power diagnostics).
+
 By default it writes a reproducible report to:
 
 - `.happy-paths/observed-ab-long-horizon/report.json`
@@ -174,6 +183,14 @@ The runner now reports two lanes:
 
 Default primary lane is `family_disjoint_eval` (recommended for external claims).
 Override with `--primary-lane full_eval` when needed.
+
+Each lane now includes first-class stratified slices:
+
+- `laneReports.<lane>.strata.model`
+- `laneReports.<lane>.strata.toolSurface`
+- `laneReports.<lane>.strata.modelToolSurface`
+
+Top-level `strata` mirrors the selected primary lane for convenience.
 
 Optional overlap cap:
 
