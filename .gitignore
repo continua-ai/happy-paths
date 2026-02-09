@@ -7,3 +7,10 @@ coverage/
 .continua-loop/
 .DS_Store
 *.log
+
+# Terraform
+.terraform/
+terraform.tfstate
+terraform.tfstate.*
+crash.log
+crash.*.log

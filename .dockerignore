@@ -1,0 +1,11 @@
+.git
+node_modules
+dist
+coverage
+.tmp
+.happy-paths
+.contilore
+.continua-loop
+terraform
+*.log
+.DS_Store
