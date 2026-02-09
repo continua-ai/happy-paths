@@ -40,6 +40,33 @@ type FeasibilityPublicEvidence = {
   runs: FeasibilityRun[];
 };
 
+type StratumGateResult = {
+  pass: boolean;
+  failures: string[];
+};
+
+type ObservedStratumReport = {
+  key: string;
+  pairCount: number;
+  gateResult: StratumGateResult;
+  aggregate: {
+    relativeRepeatedDeadEndRateReduction: number;
+    relativeWallTimeReduction: number;
+    relativeTokenCountReduction: number;
+  };
+};
+
+type TrajectoryStratumReport = {
+  key: string;
+  pairCount: number;
+  gateResult: StratumGateResult;
+  aggregate: {
+    relativeHarmfulRetryReduction: number;
+    relativeWallTimeReduction: number;
+    relativeTokenCountReduction: number;
+  };
+};
+
 type ObservedAbReport = {
   generatedAtUtc: string;
   aggregate: {
@@ -51,6 +78,11 @@ type ObservedAbReport = {
   gateResult: {
     pass: boolean;
     failures: string[];
+  };
+  strata?: {
+    model?: ObservedStratumReport[];
+    toolSurface?: ObservedStratumReport[];
+    modelToolSurface?: ObservedStratumReport[];
   };
 };
 
@@ -67,6 +99,11 @@ type TrajectoryLaneReport = {
     pass: boolean;
     failures: string[];
   };
+  strata?: {
+    model?: TrajectoryStratumReport[];
+    toolSurface?: TrajectoryStratumReport[];
+    modelToolSurface?: TrajectoryStratumReport[];
+  };
 };
 
 type TrajectoryOutcomeReport = {
@@ -82,6 +119,11 @@ type TrajectoryOutcomeReport = {
   gateResult: {
     pass: boolean;
     failures: string[];
+  };
+  strata?: {
+    model?: TrajectoryStratumReport[];
+    toolSurface?: TrajectoryStratumReport[];
+    modelToolSurface?: TrajectoryStratumReport[];
   };
   laneReports?: Record<string, TrajectoryLaneReport>;
 };
@@ -114,6 +156,18 @@ type LoopSummary = {
     wallTimeReduction: number;
     tokenCountReduction: number;
     failures: string[];
+    topModelStratum: {
+      key: string;
+      pairCount: number;
+      gatePass: boolean;
+      deadEndReduction: number;
+    } | null;
+    topToolSurfaceStratum: {
+      key: string;
+      pairCount: number;
+      gatePass: boolean;
+      deadEndReduction: number;
+    } | null;
   };
   trajectoryOutcome: {
     generatedAtUtc: string;
@@ -128,6 +182,18 @@ type LoopSummary = {
     fullEvalPairCount: number | null;
     familyDisjointPairCount: number | null;
     familyDisjointPairFloorPass: boolean;
+    topModelStratum: {
+      key: string;
+      pairCount: number;
+      gatePass: boolean;
+      harmfulRetryReduction: number;
+    } | null;
+    topToolSurfaceStratum: {
+      key: string;
+      pairCount: number;
+      gatePass: boolean;
+      harmfulRetryReduction: number;
+    } | null;
   };
   reportPaths: {
     feasibilityPublic: string;
@@ -460,6 +526,38 @@ function formatUtcWithEastern(utcIso: string): string {
   return `${utcIso} (US/Eastern: ${formatEasternIso(utcIso)})`;
 }
 
+function pickTopObservedStratum(
+  strata: ObservedStratumReport[] | undefined,
+): LoopSummary["observedAb"]["topModelStratum"] {
+  const candidate = strata?.find((entry) => entry.pairCount > 0) ?? strata?.[0];
+  if (!candidate) {
+    return null;
+  }
+
+  return {
+    key: candidate.key,
+    pairCount: candidate.pairCount,
+    gatePass: candidate.gateResult.pass,
+    deadEndReduction: candidate.aggregate.relativeRepeatedDeadEndRateReduction,
+  };
+}
+
+function pickTopTrajectoryStratum(
+  strata: TrajectoryStratumReport[] | undefined,
+): LoopSummary["trajectoryOutcome"]["topModelStratum"] {
+  const candidate = strata?.find((entry) => entry.pairCount > 0) ?? strata?.[0];
+  if (!candidate) {
+    return null;
+  }
+
+  return {
+    key: candidate.key,
+    pairCount: candidate.pairCount,
+    gatePass: candidate.gateResult.pass,
+    harmfulRetryReduction: candidate.aggregate.relativeHarmfulRetryReduction,
+  };
+}
+
 function buildMarkdown(summary: LoopSummary): string {
   return [
     `CON-1469 close-loop run (${summary.mode})`,
@@ -481,6 +579,12 @@ function buildMarkdown(summary: LoopSummary): string {
     `- pairs: ${summary.observedAb.pairCount}`,
     `- gate pass: ${summary.observedAb.gatePass}`,
     `- dead-end / wall-time / token reductions: ${summary.observedAb.deadEndReduction.toFixed(3)} / ${summary.observedAb.wallTimeReduction.toFixed(3)} / ${summary.observedAb.tokenCountReduction.toFixed(3)}`,
+    summary.observedAb.topModelStratum
+      ? `- top model stratum: ${summary.observedAb.topModelStratum.key} (pairs=${summary.observedAb.topModelStratum.pairCount}, gate=${summary.observedAb.topModelStratum.gatePass}, dead-end reduction=${summary.observedAb.topModelStratum.deadEndReduction.toFixed(3)})`
+      : "- top model stratum: n/a",
+    summary.observedAb.topToolSurfaceStratum
+      ? `- top tool-surface stratum: ${summary.observedAb.topToolSurfaceStratum.key} (pairs=${summary.observedAb.topToolSurfaceStratum.pairCount}, gate=${summary.observedAb.topToolSurfaceStratum.gatePass}, dead-end reduction=${summary.observedAb.topToolSurfaceStratum.deadEndReduction.toFixed(3)})`
+      : "- top tool-surface stratum: n/a",
     summary.observedAb.failures.length > 0
       ? `- failures: ${summary.observedAb.failures.join("; ")}`
       : "- failures: none",
@@ -493,6 +597,12 @@ function buildMarkdown(summary: LoopSummary): string {
     `- gate pass: ${summary.trajectoryOutcome.gatePass}`,
     `- harmful-retry / wall-time / token reductions: ${summary.trajectoryOutcome.harmfulRetryReduction.toFixed(3)} / ${summary.trajectoryOutcome.wallTimeReduction.toFixed(3)} / ${summary.trajectoryOutcome.tokenCountReduction.toFixed(3)}`,
     `- judgeable coverage on: ${summary.trajectoryOutcome.judgeableCoverageOn.toFixed(3)}`,
+    summary.trajectoryOutcome.topModelStratum
+      ? `- top model stratum: ${summary.trajectoryOutcome.topModelStratum.key} (pairs=${summary.trajectoryOutcome.topModelStratum.pairCount}, gate=${summary.trajectoryOutcome.topModelStratum.gatePass}, harmful reduction=${summary.trajectoryOutcome.topModelStratum.harmfulRetryReduction.toFixed(3)})`
+      : "- top model stratum: n/a",
+    summary.trajectoryOutcome.topToolSurfaceStratum
+      ? `- top tool-surface stratum: ${summary.trajectoryOutcome.topToolSurfaceStratum.key} (pairs=${summary.trajectoryOutcome.topToolSurfaceStratum.pairCount}, gate=${summary.trajectoryOutcome.topToolSurfaceStratum.gatePass}, harmful reduction=${summary.trajectoryOutcome.topToolSurfaceStratum.harmfulRetryReduction.toFixed(3)})`
+      : "- top tool-surface stratum: n/a",
     summary.trajectoryOutcome.failures.length > 0
       ? `- failures: ${summary.trajectoryOutcome.failures.join("; ")}`
       : "- failures: none",
@@ -519,6 +629,17 @@ function collectSummary(
   const primaryLane = trajectory.primaryLane ?? "full_eval";
   const fullLane = trajectory.laneReports?.full_eval;
   const familyDisjointLane = trajectory.laneReports?.family_disjoint_eval;
+  const primaryLaneStrata =
+    trajectory.strata ?? trajectory.laneReports?.[primaryLane]?.strata;
+
+  const observedTopModelStratum = pickTopObservedStratum(observedAb.strata?.model);
+  const observedTopToolSurfaceStratum = pickTopObservedStratum(
+    observedAb.strata?.toolSurface,
+  );
+  const trajectoryTopModelStratum = pickTopTrajectoryStratum(primaryLaneStrata?.model);
+  const trajectoryTopToolSurfaceStratum = pickTopTrajectoryStratum(
+    primaryLaneStrata?.toolSurface,
+  );
 
   return {
     generatedAtUtc: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
@@ -543,6 +664,8 @@ function collectSummary(
       wallTimeReduction: observedAb.aggregate.relativeWallTimeReduction,
       tokenCountReduction: observedAb.aggregate.relativeTokenCountReduction,
       failures: observedAb.gateResult.failures,
+      topModelStratum: observedTopModelStratum,
+      topToolSurfaceStratum: observedTopToolSurfaceStratum,
     },
     trajectoryOutcome: {
       generatedAtUtc: trajectory.generatedAtUtc,
@@ -559,6 +682,8 @@ function collectSummary(
       familyDisjointPairFloorPass:
         (familyDisjointLane?.aggregate.totalPairs ?? 0) >=
         longHorizonInput.minFamilyDisjointPairCount,
+      topModelStratum: trajectoryTopModelStratum,
+      topToolSurfaceStratum: trajectoryTopToolSurfaceStratum,
     },
     reportPaths,
   };

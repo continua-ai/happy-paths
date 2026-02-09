@@ -57,6 +57,96 @@ type SessionEnvelope = {
   sessionId: string;
   events: Array<Record<string, unknown>>;
   traceFiles: Set<string>;
+  modelKeys: Set<string>;
+};
+
+type TrajectoryStratumAggregate = {
+  totalPairs: number;
+  totalRetriesOff: number;
+  totalRetriesOn: number;
+  totalHarmfulRetriesOff: number;
+  totalHarmfulRetriesOn: number;
+  totalBenignRetriesOff: number;
+  totalBenignRetriesOn: number;
+  totalAbstainedRetriesOff: number;
+  totalAbstainedRetriesOn: number;
+  harmfulRetryRateOff: number;
+  harmfulRetryRateOn: number;
+  judgeableCoverageOff: number;
+  judgeableCoverageOn: number;
+  recoverySuccessRateOff: number;
+  recoverySuccessRateOn: number;
+  totalWallTimeOffMs: number;
+  totalWallTimeOnMs: number;
+  totalTokenCountOff: number;
+  totalTokenCountOn: number;
+  totalTokenProxyOff: number;
+  totalTokenProxyOn: number;
+  totalCostOffUsd: number;
+  totalCostOnUsd: number;
+  relativeHarmfulRetryReduction: number;
+  relativeWallTimeReduction: number;
+  relativeTokenCountReduction: number;
+  relativeTokenProxyReduction: number;
+  absoluteRecoverySuccessRateDelta: number;
+};
+
+type TrajectoryStratumThresholds = {
+  minPairCount: number;
+  minRelativeHarmfulRetryReduction: number;
+  minRelativeWallTimeReduction: number;
+  minRelativeTokenCountReduction: number;
+  minRecoverySuccessRateOn: number;
+  maxRecoverySuccessRateDrop: number;
+  minJudgeableCoverage: number;
+};
+
+type TrajectoryStratumSummary = {
+  key: string;
+  pairCount: number;
+  episodeCount: number;
+  sessionCount: number;
+  aggregate: TrajectoryStratumAggregate;
+  gateResult: {
+    pass: boolean;
+    failures: string[];
+  };
+};
+
+type TrajectoryStrata = {
+  model: TrajectoryStratumSummary[];
+  toolSurface: TrajectoryStratumSummary[];
+  modelToolSurface: TrajectoryStratumSummary[];
+};
+
+type TrajectoryPairLike = {
+  familySignature: string;
+  offSessionId: string;
+  onSessionId: string;
+  totalRetriesOff: number;
+  totalRetriesOn: number;
+  harmfulRetriesOff: number;
+  harmfulRetriesOn: number;
+  benignRetriesOff: number;
+  benignRetriesOn: number;
+  abstainedRetriesOff: number;
+  abstainedRetriesOn: number;
+  wallTimeOffMs: number;
+  wallTimeOnMs: number;
+  tokenCountOff: number;
+  tokenCountOn: number;
+  tokenProxyOff: number;
+  tokenProxyOn: number;
+  costOffUsd: number;
+  costOnUsd: number;
+  successOff: boolean;
+  successOn: boolean;
+};
+
+type TrajectoryEpisodeLike = {
+  id: string;
+  sessionId: string;
+  familySignature: string;
 };
 
 function parseFloatOrUndefined(value: unknown): number | undefined {
@@ -344,6 +434,450 @@ function parseJsonlRecords(raw: string): JsonRecord[] {
   return records;
 }
 
+function asRecord(value: unknown): JsonRecord | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as JsonRecord;
+}
+
+function modelKeyFromRecord(record: JsonRecord): string | null {
+  const recordType = record.type;
+  if (recordType === "model_change") {
+    const modelId = record.modelId;
+    const provider = record.provider;
+    if (typeof modelId !== "string" || !modelId.trim()) {
+      return null;
+    }
+    if (typeof provider === "string" && provider.trim()) {
+      return `${provider.trim()}/${modelId.trim()}`;
+    }
+    return modelId.trim();
+  }
+
+  if (recordType === "message") {
+    const provider = record.provider;
+    const model = record.model;
+    if (typeof model === "string" && model.trim()) {
+      if (typeof provider === "string" && provider.trim()) {
+        return `${provider.trim()}/${model.trim()}`;
+      }
+      return model.trim();
+    }
+
+    const message = asRecord(record.message);
+    if (!message) {
+      return null;
+    }
+
+    const nestedProvider = message.provider;
+    const nestedModel = message.model;
+    if (typeof nestedModel === "string" && nestedModel.trim()) {
+      if (typeof nestedProvider === "string" && nestedProvider.trim()) {
+        return `${nestedProvider.trim()}/${nestedModel.trim()}`;
+      }
+      return nestedModel.trim();
+    }
+  }
+
+  return null;
+}
+
+function detectModelKeyFromRecords(records: JsonRecord[]): string {
+  for (const record of records) {
+    const modelKey = modelKeyFromRecord(record);
+    if (modelKey) {
+      return modelKey;
+    }
+  }
+  return "unknown";
+}
+
+function resolveSessionModelKey(modelKeys: Set<string>): string {
+  const known = [...modelKeys].filter((key) => key !== "unknown");
+  if (known.length === 0) {
+    return "unknown";
+  }
+
+  const uniqueKnown = [...new Set(known)].sort();
+  if (uniqueKnown.length === 1) {
+    return uniqueKnown[0] ?? "unknown";
+  }
+
+  return `mixed:${uniqueKnown.join("|")}`;
+}
+
+function modelKeyForPair(
+  offSessionId: string,
+  onSessionId: string,
+  sessionModelKeys: Map<string, string>,
+): string {
+  const offModel = sessionModelKeys.get(offSessionId) ?? "unknown";
+  const onModel = sessionModelKeys.get(onSessionId) ?? "unknown";
+  if (offModel === onModel) {
+    return offModel;
+  }
+  const unique = [...new Set([offModel, onModel])].sort();
+  return `mixed:${unique.join("|")}`;
+}
+
+function inferToolSurfaceKey(familySignature: string): string {
+  const normalized = familySignature.trim().toLowerCase();
+  const command = normalized.split(/\s+/, 1)[0] ?? "";
+
+  if (!command) {
+    return "other";
+  }
+  if (command === "gcloud") {
+    return "cloud:gcloud";
+  }
+  if (command === "gh") {
+    return "git:github_cli";
+  }
+  if (command === "git") {
+    return "git";
+  }
+  if (command === "terraform") {
+    return "infra:terraform";
+  }
+  if (command === "pants") {
+    return "build:pants";
+  }
+  if (command === "kubectl" || command === "helm") {
+    return "k8s";
+  }
+  if (command === "docker") {
+    return "container:docker";
+  }
+  if (
+    command === "npm" ||
+    command === "npx" ||
+    command === "pnpm" ||
+    command === "yarn" ||
+    command === "node" ||
+    command === "bun"
+  ) {
+    return "js-toolchain";
+  }
+  if (
+    command === "python" ||
+    command === "python3" ||
+    command === "pip" ||
+    command === "pip3" ||
+    command === "uv" ||
+    command === "pytest"
+  ) {
+    return "python-toolchain";
+  }
+  if (command === "go" || command === "gofmt" || command === "goimports") {
+    return "go-toolchain";
+  }
+  if (command === "curl" || command === "wget" || command === "http") {
+    return "http-probe";
+  }
+  if (
+    command === "rg" ||
+    command === "grep" ||
+    command === "find" ||
+    command === "ls" ||
+    command === "bash" ||
+    command === "zsh" ||
+    command === "sh"
+  ) {
+    return "shell";
+  }
+
+  return "other";
+}
+
+function relativeReduction(off: number, on: number): number {
+  if (off <= 0) {
+    return on <= 0 ? 0 : -1;
+  }
+  return (off - on) / off;
+}
+
+function aggregateTrajectoryPairsForStratum(
+  pairs: TrajectoryPairLike[],
+): TrajectoryStratumAggregate {
+  const totalPairs = pairs.length;
+  const totalRetriesOff = pairs.reduce((sum, pair) => sum + pair.totalRetriesOff, 0);
+  const totalRetriesOn = pairs.reduce((sum, pair) => sum + pair.totalRetriesOn, 0);
+  const totalHarmfulRetriesOff = pairs.reduce(
+    (sum, pair) => sum + pair.harmfulRetriesOff,
+    0,
+  );
+  const totalHarmfulRetriesOn = pairs.reduce(
+    (sum, pair) => sum + pair.harmfulRetriesOn,
+    0,
+  );
+  const totalBenignRetriesOff = pairs.reduce(
+    (sum, pair) => sum + pair.benignRetriesOff,
+    0,
+  );
+  const totalBenignRetriesOn = pairs.reduce(
+    (sum, pair) => sum + pair.benignRetriesOn,
+    0,
+  );
+  const totalAbstainedRetriesOff = pairs.reduce(
+    (sum, pair) => sum + pair.abstainedRetriesOff,
+    0,
+  );
+  const totalAbstainedRetriesOn = pairs.reduce(
+    (sum, pair) => sum + pair.abstainedRetriesOn,
+    0,
+  );
+  const totalWallTimeOffMs = pairs.reduce((sum, pair) => sum + pair.wallTimeOffMs, 0);
+  const totalWallTimeOnMs = pairs.reduce((sum, pair) => sum + pair.wallTimeOnMs, 0);
+  const totalTokenCountOff = pairs.reduce((sum, pair) => sum + pair.tokenCountOff, 0);
+  const totalTokenCountOn = pairs.reduce((sum, pair) => sum + pair.tokenCountOn, 0);
+  const totalTokenProxyOff = pairs.reduce((sum, pair) => sum + pair.tokenProxyOff, 0);
+  const totalTokenProxyOn = pairs.reduce((sum, pair) => sum + pair.tokenProxyOn, 0);
+  const totalCostOffUsd = pairs.reduce((sum, pair) => sum + pair.costOffUsd, 0);
+  const totalCostOnUsd = pairs.reduce((sum, pair) => sum + pair.costOnUsd, 0);
+
+  const successOffCount = pairs.filter((pair) => pair.successOff).length;
+  const successOnCount = pairs.filter((pair) => pair.successOn).length;
+  const harmfulRetryRateOff =
+    totalPairs === 0 ? 0 : totalHarmfulRetriesOff / totalPairs;
+  const harmfulRetryRateOn = totalPairs === 0 ? 0 : totalHarmfulRetriesOn / totalPairs;
+  const judgeableCoverageOff =
+    totalRetriesOff === 0
+      ? 0
+      : Math.max(0, totalRetriesOff - totalAbstainedRetriesOff) / totalRetriesOff;
+  const judgeableCoverageOn =
+    totalRetriesOn === 0
+      ? 0
+      : Math.max(0, totalRetriesOn - totalAbstainedRetriesOn) / totalRetriesOn;
+  const recoverySuccessRateOff = totalPairs === 0 ? 0 : successOffCount / totalPairs;
+  const recoverySuccessRateOn = totalPairs === 0 ? 0 : successOnCount / totalPairs;
+
+  return {
+    totalPairs,
+    totalRetriesOff,
+    totalRetriesOn,
+    totalHarmfulRetriesOff,
+    totalHarmfulRetriesOn,
+    totalBenignRetriesOff,
+    totalBenignRetriesOn,
+    totalAbstainedRetriesOff,
+    totalAbstainedRetriesOn,
+    harmfulRetryRateOff,
+    harmfulRetryRateOn,
+    judgeableCoverageOff,
+    judgeableCoverageOn,
+    recoverySuccessRateOff,
+    recoverySuccessRateOn,
+    totalWallTimeOffMs,
+    totalWallTimeOnMs,
+    totalTokenCountOff,
+    totalTokenCountOn,
+    totalTokenProxyOff,
+    totalTokenProxyOn,
+    totalCostOffUsd,
+    totalCostOnUsd,
+    relativeHarmfulRetryReduction: relativeReduction(
+      totalHarmfulRetriesOff,
+      totalHarmfulRetriesOn,
+    ),
+    relativeWallTimeReduction: relativeReduction(totalWallTimeOffMs, totalWallTimeOnMs),
+    relativeTokenCountReduction: relativeReduction(
+      totalTokenCountOff,
+      totalTokenCountOn,
+    ),
+    relativeTokenProxyReduction: relativeReduction(
+      totalTokenProxyOff,
+      totalTokenProxyOn,
+    ),
+    absoluteRecoverySuccessRateDelta: recoverySuccessRateOn - recoverySuccessRateOff,
+  };
+}
+
+function evaluateTrajectoryGateForStratum(
+  aggregate: TrajectoryStratumAggregate,
+  thresholds: TrajectoryStratumThresholds,
+): {
+  pass: boolean;
+  failures: string[];
+} {
+  const failures: string[] = [];
+  if (aggregate.totalPairs < thresholds.minPairCount) {
+    failures.push(`pair count ${aggregate.totalPairs} < ${thresholds.minPairCount}`);
+  }
+  if (
+    aggregate.relativeHarmfulRetryReduction <
+    thresholds.minRelativeHarmfulRetryReduction
+  ) {
+    failures.push(
+      `harmful retry reduction ${aggregate.relativeHarmfulRetryReduction.toFixed(3)} < ${thresholds.minRelativeHarmfulRetryReduction.toFixed(3)}`,
+    );
+  }
+  if (aggregate.relativeWallTimeReduction < thresholds.minRelativeWallTimeReduction) {
+    failures.push(
+      `wall-time reduction ${aggregate.relativeWallTimeReduction.toFixed(3)} < ${thresholds.minRelativeWallTimeReduction.toFixed(3)}`,
+    );
+  }
+  if (
+    aggregate.relativeTokenCountReduction < thresholds.minRelativeTokenCountReduction
+  ) {
+    failures.push(
+      `token-count reduction ${aggregate.relativeTokenCountReduction.toFixed(3)} < ${thresholds.minRelativeTokenCountReduction.toFixed(3)}`,
+    );
+  }
+  if (aggregate.recoverySuccessRateOn < thresholds.minRecoverySuccessRateOn) {
+    failures.push(
+      `recovery success on ${aggregate.recoverySuccessRateOn.toFixed(3)} < ${thresholds.minRecoverySuccessRateOn.toFixed(3)}`,
+    );
+  }
+  if (
+    aggregate.absoluteRecoverySuccessRateDelta < -thresholds.maxRecoverySuccessRateDrop
+  ) {
+    failures.push(
+      `recovery success drop ${(-aggregate.absoluteRecoverySuccessRateDelta).toFixed(3)} > ${thresholds.maxRecoverySuccessRateDrop.toFixed(3)}`,
+    );
+  }
+  if (aggregate.judgeableCoverageOff < thresholds.minJudgeableCoverage) {
+    failures.push(
+      `judgeable coverage off ${aggregate.judgeableCoverageOff.toFixed(3)} < ${thresholds.minJudgeableCoverage.toFixed(3)}`,
+    );
+  }
+  if (aggregate.judgeableCoverageOn < thresholds.minJudgeableCoverage) {
+    failures.push(
+      `judgeable coverage on ${aggregate.judgeableCoverageOn.toFixed(3)} < ${thresholds.minJudgeableCoverage.toFixed(3)}`,
+    );
+  }
+
+  return {
+    pass: failures.length === 0,
+    failures,
+  };
+}
+
+function sortTrajectoryStrata(
+  strata: TrajectoryStratumSummary[],
+): TrajectoryStratumSummary[] {
+  return [...strata].sort((left, right) => {
+    if (right.pairCount !== left.pairCount) {
+      return right.pairCount - left.pairCount;
+    }
+    if (right.episodeCount !== left.episodeCount) {
+      return right.episodeCount - left.episodeCount;
+    }
+    return left.key < right.key ? -1 : left.key > right.key ? 1 : 0;
+  });
+}
+
+function buildTrajectoryStrata(
+  episodes: TrajectoryEpisodeLike[],
+  pairs: TrajectoryPairLike[],
+  sessionModelKeys: Map<string, string>,
+  thresholds: TrajectoryStratumThresholds,
+): TrajectoryStrata {
+  const byDimension = {
+    model: {
+      episodeIds: new Map<string, Set<string>>(),
+      sessionIds: new Map<string, Set<string>>(),
+      pairs: new Map<string, TrajectoryPairLike[]>(),
+    },
+    toolSurface: {
+      episodeIds: new Map<string, Set<string>>(),
+      sessionIds: new Map<string, Set<string>>(),
+      pairs: new Map<string, TrajectoryPairLike[]>(),
+    },
+    modelToolSurface: {
+      episodeIds: new Map<string, Set<string>>(),
+      sessionIds: new Map<string, Set<string>>(),
+      pairs: new Map<string, TrajectoryPairLike[]>(),
+    },
+  };
+
+  function addEpisodeKey(
+    dimension: keyof TrajectoryStrata,
+    key: string,
+    episodeId: string,
+    sessionId: string,
+  ): void {
+    const episodeSet = byDimension[dimension].episodeIds.get(key) ?? new Set<string>();
+    episodeSet.add(episodeId);
+    byDimension[dimension].episodeIds.set(key, episodeSet);
+
+    const sessionSet = byDimension[dimension].sessionIds.get(key) ?? new Set<string>();
+    sessionSet.add(sessionId);
+    byDimension[dimension].sessionIds.set(key, sessionSet);
+  }
+
+  function addPairKey(
+    dimension: keyof TrajectoryStrata,
+    key: string,
+    pair: TrajectoryPairLike,
+  ): void {
+    const pairList = byDimension[dimension].pairs.get(key) ?? [];
+    pairList.push(pair);
+    byDimension[dimension].pairs.set(key, pairList);
+  }
+
+  for (const episode of episodes) {
+    const modelKey = sessionModelKeys.get(episode.sessionId) ?? "unknown";
+    const toolSurfaceKey = inferToolSurfaceKey(episode.familySignature);
+    const modelToolKey = `${modelKey}__${toolSurfaceKey}`;
+
+    addEpisodeKey("model", modelKey, episode.id, episode.sessionId);
+    addEpisodeKey("toolSurface", toolSurfaceKey, episode.id, episode.sessionId);
+    addEpisodeKey("modelToolSurface", modelToolKey, episode.id, episode.sessionId);
+  }
+
+  for (const pair of pairs) {
+    const modelKey = modelKeyForPair(
+      pair.offSessionId,
+      pair.onSessionId,
+      sessionModelKeys,
+    );
+    const toolSurfaceKey = inferToolSurfaceKey(pair.familySignature);
+    const modelToolKey = `${modelKey}__${toolSurfaceKey}`;
+
+    addPairKey("model", modelKey, pair);
+    addPairKey("toolSurface", toolSurfaceKey, pair);
+    addPairKey("modelToolSurface", modelToolKey, pair);
+  }
+
+  function summarizeDimension(
+    dimension: keyof TrajectoryStrata,
+  ): TrajectoryStratumSummary[] {
+    const keys = new Set<string>([
+      ...byDimension[dimension].episodeIds.keys(),
+      ...byDimension[dimension].pairs.keys(),
+    ]);
+
+    const summaries: TrajectoryStratumSummary[] = [];
+    for (const key of keys) {
+      const stratumPairs = byDimension[dimension].pairs.get(key) ?? [];
+      const aggregate = aggregateTrajectoryPairsForStratum(stratumPairs);
+      const gateResult = evaluateTrajectoryGateForStratum(aggregate, thresholds);
+      const episodeIds =
+        byDimension[dimension].episodeIds.get(key) ?? new Set<string>();
+      const sessionIds =
+        byDimension[dimension].sessionIds.get(key) ?? new Set<string>();
+
+      summaries.push({
+        key,
+        pairCount: aggregate.totalPairs,
+        episodeCount: episodeIds.size,
+        sessionCount: sessionIds.size,
+        aggregate,
+        gateResult,
+      });
+    }
+
+    return sortTrajectoryStrata(summaries);
+  }
+
+  return {
+    model: summarizeDimension("model"),
+    toolSurface: summarizeDimension("toolSurface"),
+    modelToolSurface: summarizeDimension("modelToolSurface"),
+  };
+}
+
 function isTraceEventRecord(record: JsonRecord): boolean {
   return (
     typeof record.id === "string" &&
@@ -436,6 +970,8 @@ async function main(): Promise<void> {
       continue;
     }
 
+    const sourceModelKey = detectModelKeyFromRecords(records);
+
     const traceEvents = records.filter(isTraceEventRecord);
     const shouldUseTraceFormat =
       options.format === "trace" ||
@@ -472,6 +1008,7 @@ async function main(): Promise<void> {
       if (existing) {
         existing.events.push(event);
         existing.traceFiles.add(traceFile);
+        existing.modelKeys.add(sourceModelKey);
         continue;
       }
 
@@ -479,6 +1016,7 @@ async function main(): Promise<void> {
         sessionId,
         events: [event],
         traceFiles: new Set([traceFile]),
+        modelKeys: new Set([sourceModelKey]),
       });
     }
   }
@@ -490,6 +1028,12 @@ async function main(): Promise<void> {
       envelope.events,
     );
   });
+
+  const sessionModelKeys = new Map<string, string>(
+    [...sessionEnvelopes.values()].map((envelope) => {
+      return [envelope.sessionId, resolveSessionModelKey(envelope.modelKeys)];
+    }),
+  );
 
   const longHorizonSessions = filterLongHorizonSessions(sessionSummaries, {
     minSessionDurationMs: options.minSessionDurationMs,
@@ -545,6 +1089,20 @@ async function main(): Promise<void> {
     trustOptions,
   );
 
+  const fullEvalStrata = buildTrajectoryStrata(
+    fullEvalReport.episodes as TrajectoryEpisodeLike[],
+    fullEvalReport.pairs as TrajectoryPairLike[],
+    sessionModelKeys,
+    fullEvalReport.thresholds as TrajectoryStratumThresholds,
+  );
+
+  const familyDisjointStrata = buildTrajectoryStrata(
+    familyDisjointEvalReport.episodes as TrajectoryEpisodeLike[],
+    familyDisjointEvalReport.pairs as TrajectoryPairLike[],
+    sessionModelKeys,
+    familyDisjointEvalReport.thresholds as TrajectoryStratumThresholds,
+  );
+
   const laneReports = {
     full_eval: {
       episodeCount: evalEpisodes.length,
@@ -552,6 +1110,7 @@ async function main(): Promise<void> {
       removedEvalFamilyCount: 0,
       disjointEvalFamilyCount: familyOverlap.evalFamilyCount,
       report: fullEvalReport,
+      strata: fullEvalStrata,
     },
     family_disjoint_eval: {
       episodeCount: disjointSlice.episodes.length,
@@ -559,6 +1118,7 @@ async function main(): Promise<void> {
       removedEvalFamilyCount: disjointSlice.stats.removedEvalFamilyCount,
       disjointEvalFamilyCount: disjointSlice.stats.disjointEvalFamilyCount,
       report: familyDisjointEvalReport,
+      strata: familyDisjointStrata,
     },
   };
 
@@ -647,6 +1207,7 @@ async function main(): Promise<void> {
         aggregate: laneReports.full_eval.report.aggregate,
         trustSummary: laneReports.full_eval.report.trustSummary,
         gateResult: laneReports.full_eval.report.gateResult,
+        strata: laneReports.full_eval.strata,
       },
       family_disjoint_eval: {
         episodeCount: laneReports.family_disjoint_eval.episodeCount,
@@ -660,8 +1221,10 @@ async function main(): Promise<void> {
         aggregate: laneReports.family_disjoint_eval.report.aggregate,
         trustSummary: laneReports.family_disjoint_eval.report.trustSummary,
         gateResult: laneReports.family_disjoint_eval.report.gateResult,
+        strata: laneReports.family_disjoint_eval.strata,
       },
     },
+    strata: primaryLaneReport.strata,
     thresholds: primaryLaneReport.report.thresholds,
     pairing: primaryLaneReport.report.pairing,
     pairingDiagnostics: primaryLaneReport.report.pairingDiagnostics,
@@ -712,6 +1275,28 @@ async function main(): Promise<void> {
       ].join(" "),
     );
     console.log(`- primary lane: ${options.primaryLane}`);
+
+    const topModelStratum = primaryLaneReport.strata.model[0];
+    if (topModelStratum) {
+      console.log(
+        [
+          "- primary lane top model stratum:",
+          `${topModelStratum.key}`,
+          `(pairs=${topModelStratum.pairCount}, gate=${topModelStratum.gateResult.pass})`,
+        ].join(" "),
+      );
+    }
+
+    const topToolSurfaceStratum = primaryLaneReport.strata.toolSurface[0];
+    if (topToolSurfaceStratum) {
+      console.log(
+        [
+          "- primary lane top tool-surface stratum:",
+          `${topToolSurfaceStratum.key}`,
+          `(pairs=${topToolSurfaceStratum.pairCount}, gate=${topToolSurfaceStratum.gateResult.pass})`,
+        ].join(" "),
+      );
+    }
 
     const fullAggregate = laneReports.full_eval.report.aggregate;
     const disjointAggregate = laneReports.family_disjoint_eval.report.aggregate;

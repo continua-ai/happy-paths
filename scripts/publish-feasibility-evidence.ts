@@ -82,6 +82,22 @@ type ObservedAbInterval = {
   high: number;
 };
 
+type RawObservedStratum = {
+  key: string;
+  pairCount: number;
+  episodeCount: number;
+  sessionCount: number;
+  aggregate: {
+    relativeRepeatedDeadEndRateReduction: number;
+    relativeWallTimeReduction: number;
+    relativeTokenCountReduction: number;
+  };
+  gateResult: {
+    pass: boolean;
+    failures: string[];
+  };
+};
+
 type RawObservedAbLongHorizonReport = {
   schemaVersion: number;
   generatedAtUtc: string;
@@ -168,6 +184,11 @@ type RawObservedAbLongHorizonReport = {
     pass: boolean;
     failures: string[];
   };
+  strata?: {
+    model: RawObservedStratum[];
+    toolSurface: RawObservedStratum[];
+    modelToolSurface: RawObservedStratum[];
+  };
 };
 
 type ObservedAbEvidence = {
@@ -239,6 +260,11 @@ type ObservedAbEvidence = {
   gateResult: {
     pass: boolean;
     failures: string[];
+  };
+  strata?: {
+    model: RawObservedStratum[];
+    toolSurface: RawObservedStratum[];
+    modelToolSurface: RawObservedStratum[];
   };
 };
 
@@ -557,6 +583,41 @@ function buildObservedAbRunCommand(raw: RawObservedAbLongHorizonReport): string 
   ].join(" ");
 }
 
+function sanitizeObservedStrata(
+  strata: RawObservedAbLongHorizonReport["strata"],
+): ObservedAbEvidence["strata"] {
+  if (!strata) {
+    return undefined;
+  }
+
+  function mapEntries(entries: RawObservedStratum[]): RawObservedStratum[] {
+    return entries.map((entry) => {
+      return {
+        key: entry.key,
+        pairCount: entry.pairCount,
+        episodeCount: entry.episodeCount,
+        sessionCount: entry.sessionCount,
+        aggregate: {
+          relativeRepeatedDeadEndRateReduction:
+            entry.aggregate.relativeRepeatedDeadEndRateReduction,
+          relativeWallTimeReduction: entry.aggregate.relativeWallTimeReduction,
+          relativeTokenCountReduction: entry.aggregate.relativeTokenCountReduction,
+        },
+        gateResult: {
+          pass: entry.gateResult.pass,
+          failures: entry.gateResult.failures,
+        },
+      };
+    });
+  }
+
+  return {
+    model: mapEntries(strata.model),
+    toolSurface: mapEntries(strata.toolSurface),
+    modelToolSurface: mapEntries(strata.modelToolSurface),
+  };
+}
+
 function toObservedAbEvidence(raw: RawObservedAbLongHorizonReport): ObservedAbEvidence {
   return {
     schemaVersion: 1,
@@ -628,6 +689,7 @@ function toObservedAbEvidence(raw: RawObservedAbLongHorizonReport): ObservedAbEv
       expectedDeadEndsAvoided: raw.trustSummary.expectedDeadEndsAvoided,
     },
     gateResult: raw.gateResult,
+    strata: sanitizeObservedStrata(raw.strata),
   };
 }
 
