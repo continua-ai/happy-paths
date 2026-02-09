@@ -77,10 +77,10 @@ Body (both cases):
 {
   "accepted": true,
   "duplicate": false,
-  "teamId": "continua",
+  "teamId": "example-team",
   "sessionId": "...",
   "contentSha256": "...",
-  "storedKey": "teams/continua/trace-bundles/v1/sessions/<sessionId>/<sha>.jsonl.gz",
+  "storedKey": "teams/example-team/trace-bundles/v1/sessions/<sessionId>/<sha>.jsonl.gz",
   "receivedAtUtc": "2026-02-09T01:23:45Z"
 }
 ```
