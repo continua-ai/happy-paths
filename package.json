@@ -34,6 +34,8 @@
     "build:feasibility-dataset": "tsc -p tsconfig.build.json && tsx scripts/build-feasibility-dataset-from-traces.ts",
     "memo:feasibility": "tsc -p tsconfig.build.json && tsx scripts/write-feasibility-memo.ts",
     "sync:evidence-web": "tsx scripts/publish-feasibility-evidence.ts",
+    "ingest:server": "tsx scripts/run-ingest-server.ts",
+    "ingest:ship": "tsx scripts/ship-trace-bundles.ts",
     "loop:con1469": "tsx scripts/run-con1469-close-loop.ts",
     "loop:con1469:sweep-roots": "tsx scripts/sweep-con1469-long-horizon-roots.ts",
     "typecheck": "tsc --noEmit",

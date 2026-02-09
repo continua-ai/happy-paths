@@ -98,3 +98,15 @@ We prioritize:
 3. semantic add-ons for distilled artifacts
 
 This keeps latency and cost low while preserving precision.
+
+## Centralized ingest (optional)
+
+The default mode is local-only capture to a file-backed trace store.
+
+For team-scale mining/evaluation, Happy Paths supports an **HTTP ingest** flow:
+
+- Pi extension stays local-capture-only.
+- A shipper uploads gzip-compressed session bundles to an ingest endpoint.
+- Ingest enforces a Team boundary and stores raw bundles for downstream indexing.
+
+Contract + reference scripts: `docs/http-ingest.md`.
