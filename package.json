@@ -51,6 +51,9 @@
   },
   "homepage": "https://github.com/continua-ai/happy-paths#readme",
   "keywords": ["agent", "llm", "retrieval", "trace", "pi", "continua"],
+  "dependencies": {
+    "@google-cloud/storage": "^7.16.0"
+  },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/node": "^24.3.0",

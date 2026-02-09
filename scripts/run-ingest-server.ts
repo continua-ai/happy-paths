@@ -1,4 +1,5 @@
 import { FileTraceBundleStore } from "../src/ingest/fileTraceBundleStore.js";
+import { GcsTraceBundleStore } from "../src/ingest/gcsTraceBundleStore.js";
 import { createHttpIngestServer } from "../src/ingest/httpIngestServer.js";
 import { loadTeamAuthFromEnv } from "../src/ingest/teamAuth.js";
 
@@ -6,6 +7,8 @@ interface Options {
   port: number;
   host: string;
   storageDir: string;
+  gcsBucket?: string;
+  gcsPrefix?: string;
   maxBodyBytes: number;
 }
 
@@ -16,6 +19,8 @@ function parseArgs(argv: string[]): Options {
     host: "0.0.0.0",
     storageDir:
       process.env.HAPPY_PATHS_INGEST_STORAGE_DIR ?? "./.happy-paths-ingest-data",
+    gcsBucket: process.env.HAPPY_PATHS_INGEST_GCS_BUCKET,
+    gcsPrefix: process.env.HAPPY_PATHS_INGEST_GCS_PREFIX,
     maxBodyBytes: process.env.HAPPY_PATHS_MAX_BODY_BYTES
       ? Number(process.env.HAPPY_PATHS_MAX_BODY_BYTES)
       : 50 * 1024 * 1024,
@@ -37,6 +42,18 @@ function parseArgs(argv: string[]): Options {
 
     if (arg === "--storage-dir") {
       options.storageDir = argv[i + 1] ?? options.storageDir;
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--gcs-bucket") {
+      options.gcsBucket = argv[i + 1] ?? options.gcsBucket;
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--gcs-prefix") {
+      options.gcsPrefix = argv[i + 1] ?? options.gcsPrefix;
       i += 1;
       continue;
     }
@@ -65,7 +82,13 @@ async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const { auth, teamCount } = loadTeamAuthFromEnv(process.env);
 
-  const store = new FileTraceBundleStore(options.storageDir);
+  const store = options.gcsBucket?.trim()
+    ? new GcsTraceBundleStore({
+        bucket: options.gcsBucket,
+        prefix: options.gcsPrefix,
+      })
+    : new FileTraceBundleStore(options.storageDir);
+
   const server = createHttpIngestServer({
     auth,
     store,
@@ -80,7 +103,17 @@ async function main(): Promise<void> {
           listening: true,
           host: options.host,
           port: options.port,
-          storageDir: options.storageDir,
+          storage:
+            store instanceof GcsTraceBundleStore
+              ? {
+                  kind: "gcs",
+                  bucket: options.gcsBucket,
+                  prefix: options.gcsPrefix ?? "",
+                }
+              : {
+                  kind: "filesystem",
+                  dir: options.storageDir,
+                },
           teamCount,
         },
         null,
