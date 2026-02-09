@@ -64,6 +64,8 @@ type TrajectoryStratumReport = {
     relativeHarmfulRetryReduction: number;
     relativeWallTimeReduction: number;
     relativeTokenCountReduction: number;
+    judgeableCoverageOff?: number;
+    judgeableCoverageOn?: number;
   };
 };
 
@@ -128,6 +130,32 @@ type TrajectoryOutcomeReport = {
   laneReports?: Record<string, TrajectoryLaneReport>;
 };
 
+type PairPowerSlice = {
+  key: string;
+  pairCount: number;
+  gatePass: boolean;
+};
+
+type PairPowerDimension = {
+  minPairsForPower: number;
+  preferredMinPairsForPower: number;
+  poweredMinPairs: PairPowerSlice[];
+  poweredPreferredPairs: PairPowerSlice[];
+  underpoweredPairs: PairPowerSlice[];
+};
+
+type PairPowerScoreboard = {
+  model: PairPowerDimension;
+  toolSurface: PairPowerDimension;
+  modelToolSurface: PairPowerDimension;
+};
+
+type StratumWithPairs = {
+  key: string;
+  pairCount: number;
+  gateResult: StratumGateResult;
+};
+
 type LoopSummary = {
   generatedAtUtc: string;
   mode: LoopMode;
@@ -168,6 +196,7 @@ type LoopSummary = {
       gatePass: boolean;
       deadEndReduction: number;
     } | null;
+    pairPower: PairPowerScoreboard | null;
   };
   trajectoryOutcome: {
     generatedAtUtc: string;
@@ -194,6 +223,7 @@ type LoopSummary = {
       gatePass: boolean;
       harmfulRetryReduction: number;
     } | null;
+    pairPower: PairPowerScoreboard | null;
   };
   reportPaths: {
     feasibilityPublic: string;
@@ -558,6 +588,106 @@ function pickTopTrajectoryStratum(
   };
 }
 
+function buildPairPowerDimension(
+  strata: StratumWithPairs[] | undefined,
+  minPairsForPower: number,
+  preferredMinPairsForPower: number,
+): PairPowerDimension {
+  const sorted = (strata ?? [])
+    .filter((entry) => entry.pairCount > 0)
+    .sort((left, right) => right.pairCount - left.pairCount);
+
+  const toSlice = (entry: StratumWithPairs): PairPowerSlice => {
+    return {
+      key: entry.key,
+      pairCount: entry.pairCount,
+      gatePass: entry.gateResult.pass,
+    };
+  };
+
+  const poweredMinPairs = sorted
+    .filter((entry) => entry.pairCount >= minPairsForPower)
+    .map(toSlice)
+    .slice(0, 10);
+
+  const poweredPreferredPairs = sorted
+    .filter((entry) => entry.pairCount >= preferredMinPairsForPower)
+    .map(toSlice)
+    .slice(0, 10);
+
+  const underpoweredPairs = sorted
+    .filter((entry) => entry.pairCount < minPairsForPower)
+    .map(toSlice)
+    .slice(0, 10);
+
+  return {
+    minPairsForPower,
+    preferredMinPairsForPower,
+    poweredMinPairs,
+    poweredPreferredPairs,
+    underpoweredPairs,
+  };
+}
+
+function buildPairPowerScoreboard(
+  strata:
+    | {
+        model?: StratumWithPairs[];
+        toolSurface?: StratumWithPairs[];
+        modelToolSurface?: StratumWithPairs[];
+      }
+    | undefined,
+  minPairsForPower: number,
+  preferredMinPairsForPower: number,
+): PairPowerScoreboard | null {
+  if (!strata) {
+    return null;
+  }
+
+  return {
+    model: buildPairPowerDimension(
+      strata.model,
+      minPairsForPower,
+      preferredMinPairsForPower,
+    ),
+    toolSurface: buildPairPowerDimension(
+      strata.toolSurface,
+      minPairsForPower,
+      preferredMinPairsForPower,
+    ),
+    modelToolSurface: buildPairPowerDimension(
+      strata.modelToolSurface,
+      minPairsForPower,
+      preferredMinPairsForPower,
+    ),
+  };
+}
+
+function formatPairPowerSlices(slices: PairPowerSlice[], limit = 5): string {
+  const limited = slices.slice(0, limit);
+  if (limited.length === 0) {
+    return "none";
+  }
+
+  return limited
+    .map((slice) => {
+      return `${slice.key}=${slice.pairCount}`;
+    })
+    .join(", ");
+}
+
+function formatPairPowerHeadline(dimension: PairPowerDimension): string {
+  const poweredMin = dimension.poweredMinPairs.length;
+  const poweredPreferred = dimension.poweredPreferredPairs.length;
+  const underpowered = dimension.underpoweredPairs.length;
+
+  return [
+    `>=${dimension.minPairsForPower}: ${poweredMin}`,
+    `>=${dimension.preferredMinPairsForPower}: ${poweredPreferred}`,
+    `<${dimension.minPairsForPower}: ${underpowered}`,
+  ].join(", ");
+}
+
 function buildMarkdown(summary: LoopSummary): string {
   return [
     `CON-1469 close-loop run (${summary.mode})`,
@@ -585,6 +715,18 @@ function buildMarkdown(summary: LoopSummary): string {
     summary.observedAb.topToolSurfaceStratum
       ? `- top tool-surface stratum: ${summary.observedAb.topToolSurfaceStratum.key} (pairs=${summary.observedAb.topToolSurfaceStratum.pairCount}, gate=${summary.observedAb.topToolSurfaceStratum.gatePass}, dead-end reduction=${summary.observedAb.topToolSurfaceStratum.deadEndReduction.toFixed(3)})`
       : "- top tool-surface stratum: n/a",
+    summary.observedAb.pairPower
+      ? `- pair power (model strata): ${formatPairPowerHeadline(summary.observedAb.pairPower.model)}`
+      : "- pair power (model strata): n/a",
+    summary.observedAb.pairPower
+      ? `- underpowered model strata (<${summary.observedAb.pairPower.model.minPairsForPower} pairs): ${formatPairPowerSlices(summary.observedAb.pairPower.model.underpoweredPairs)}`
+      : "- underpowered model strata: n/a",
+    summary.observedAb.pairPower
+      ? `- pair power (tool-surface strata): ${formatPairPowerHeadline(summary.observedAb.pairPower.toolSurface)}`
+      : "- pair power (tool-surface strata): n/a",
+    summary.observedAb.pairPower
+      ? `- underpowered tool-surface strata (<${summary.observedAb.pairPower.toolSurface.minPairsForPower} pairs): ${formatPairPowerSlices(summary.observedAb.pairPower.toolSurface.underpoweredPairs)}`
+      : "- underpowered tool-surface strata: n/a",
     summary.observedAb.failures.length > 0
       ? `- failures: ${summary.observedAb.failures.join("; ")}`
       : "- failures: none",
@@ -603,6 +745,18 @@ function buildMarkdown(summary: LoopSummary): string {
     summary.trajectoryOutcome.topToolSurfaceStratum
       ? `- top tool-surface stratum: ${summary.trajectoryOutcome.topToolSurfaceStratum.key} (pairs=${summary.trajectoryOutcome.topToolSurfaceStratum.pairCount}, gate=${summary.trajectoryOutcome.topToolSurfaceStratum.gatePass}, harmful reduction=${summary.trajectoryOutcome.topToolSurfaceStratum.harmfulRetryReduction.toFixed(3)})`
       : "- top tool-surface stratum: n/a",
+    summary.trajectoryOutcome.pairPower
+      ? `- pair power (model strata): ${formatPairPowerHeadline(summary.trajectoryOutcome.pairPower.model)}`
+      : "- pair power (model strata): n/a",
+    summary.trajectoryOutcome.pairPower
+      ? `- underpowered model strata (<${summary.trajectoryOutcome.pairPower.model.minPairsForPower} pairs): ${formatPairPowerSlices(summary.trajectoryOutcome.pairPower.model.underpoweredPairs)}`
+      : "- underpowered model strata: n/a",
+    summary.trajectoryOutcome.pairPower
+      ? `- pair power (tool-surface strata): ${formatPairPowerHeadline(summary.trajectoryOutcome.pairPower.toolSurface)}`
+      : "- pair power (tool-surface strata): n/a",
+    summary.trajectoryOutcome.pairPower
+      ? `- underpowered tool-surface strata (<${summary.trajectoryOutcome.pairPower.toolSurface.minPairsForPower} pairs): ${formatPairPowerSlices(summary.trajectoryOutcome.pairPower.toolSurface.underpoweredPairs)}`
+      : "- underpowered tool-surface strata: n/a",
     summary.trajectoryOutcome.failures.length > 0
       ? `- failures: ${summary.trajectoryOutcome.failures.join("; ")}`
       : "- failures: none",
@@ -641,6 +795,24 @@ function collectSummary(
     primaryLaneStrata?.toolSurface,
   );
 
+  const minPairsForPower = Math.max(
+    1,
+    Math.floor(longHorizonInput.minFamilyDisjointPairCount),
+  );
+  const preferredMinPairsForPower = 50;
+
+  const observedPairPower = buildPairPowerScoreboard(
+    observedAb.strata,
+    minPairsForPower,
+    preferredMinPairsForPower,
+  );
+
+  const trajectoryPairPower = buildPairPowerScoreboard(
+    primaryLaneStrata,
+    minPairsForPower,
+    preferredMinPairsForPower,
+  );
+
   return {
     generatedAtUtc: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
     mode: "summary",
@@ -666,6 +838,7 @@ function collectSummary(
       failures: observedAb.gateResult.failures,
       topModelStratum: observedTopModelStratum,
       topToolSurfaceStratum: observedTopToolSurfaceStratum,
+      pairPower: observedPairPower,
     },
     trajectoryOutcome: {
       generatedAtUtc: trajectory.generatedAtUtc,
@@ -684,6 +857,7 @@ function collectSummary(
         longHorizonInput.minFamilyDisjointPairCount,
       topModelStratum: trajectoryTopModelStratum,
       topToolSurfaceStratum: trajectoryTopToolSurfaceStratum,
+      pairPower: trajectoryPairPower,
     },
     reportPaths,
   };

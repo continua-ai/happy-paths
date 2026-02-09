@@ -91,6 +91,155 @@ describe("trajectory outcome gate", () => {
     expect(issue?.harmful).toBe(false);
   });
 
+  it("treats jq parse errors during probes as benign", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "jq-parse-error",
+        type: "tool_result",
+        payload: {
+          command: "curl -sS https://example.com/api | jq -c .",
+          output: "jq: parse error: Invalid numeric literal at line 1, column 2",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("benign_probe");
+    expect(issue?.harmful).toBe(false);
+  });
+
+  it("classifies gh template misuse as command mismatch", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "gh-template-misuse",
+        type: "tool_result",
+        payload: {
+          command: "gh pr view 123 --template '{{.title}}'",
+          output: "cannot use `--template` without specifying `--json`",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("command_mismatch");
+    expect(issue?.harmful).toBe(true);
+  });
+
+  it("classifies reauthentication blocks as missing context", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "gcloud-reauth",
+        type: "tool_result",
+        payload: {
+          command: "gcloud auth print-access-token",
+          output:
+            "ERROR: (gcloud.auth.print-access-token) There was a problem refreshing your current auth tokens: Reauthentication failed. Cannot prompt during non-interactive execution.",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("missing_context");
+    expect(issue?.harmful).toBe(true);
+  });
+
+  it("classifies ERR_MODULE_NOT_FOUND as environment mismatch", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "node-err-module-not-found",
+        type: "tool_result",
+        payload: {
+          command: "node --check /tmp/script.mjs",
+          output:
+            "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'playwright' imported from /tmp/script.mjs",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("environment_mismatch");
+    expect(issue?.harmful).toBe(true);
+  });
+
+  it("classifies generic python tracebacks as missing context", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "python-traceback",
+        type: "tool_result",
+        payload: {
+          command: "python3 /tmp/example.py",
+          output: "Traceback (most recent call last):",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("missing_context");
+    expect(issue?.harmful).toBe(true);
+  });
+
+  it("classifies biome check failures as missing context", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "biome-check",
+        type: "tool_result",
+        payload: {
+          command: "biome check .",
+          output: "× Some errors were emitted while running checks.",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("missing_context");
+    expect(issue?.harmful).toBe(true);
+  });
+
+  it("classifies empty non-probe failures as environment mismatch", () => {
+    const issue = classifyTrajectoryIssue(
+      event({
+        id: "empty-non-probe",
+        type: "tool_result",
+        payload: {
+          command: "cd /tmp && npm run verify",
+          output: "",
+          isError: true,
+        },
+        metrics: {
+          outcome: "failure",
+        },
+      }),
+    );
+
+    expect(issue).not.toBeNull();
+    expect(issue?.kind).toBe("environment_mismatch");
+    expect(issue?.harmful).toBe(true);
+  });
+
   it("classifies policy-required flag errors as command mismatch", () => {
     const issue = classifyTrajectoryIssue(
       event({
