@@ -12,6 +12,18 @@ Design intent:
   evaluation can use full-fidelity data.
 - Require scrubbing only at **public export** boundaries.
 
+## What this ingest server does (and does not do)
+
+The reference HTTP ingest server is intentionally **ingest-only**:
+
+- Accepts trace session bundles.
+- Enforces a Team boundary via bearer tokens.
+- Stores raw bundles durably (filesystem or GCS).
+
+It intentionally does **not** include downstream mining/ranking/deduping/skill
+synthesis logic. Hosted deployments can run separate worker pipelines over the
+stored bundles.
+
 ## Terms
 
 - **TraceEvent**: Happy Paths normalized event (`src/core/types.ts`).
