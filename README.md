@@ -22,6 +22,7 @@
 <p align="center">
   <a href="https://happypaths.dev">Website</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
+  <a href="docs/http-ingest.md">HTTP ingest</a> ·
   <a href="docs/wrong-turn-flow.md">Wrong-turn flow</a> ·
   <a href="docs/feasibility-gate.md">Feasibility gate</a> ·
   <a href="docs/skateboard-e2e.md">Skateboard E2E</a> ·
