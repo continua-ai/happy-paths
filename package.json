@@ -16,6 +16,7 @@
   "packageManager": "bun@1.2.22",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "clean": "rm -rf dist",
     "format": "biome format --write .",
     "guardrails": "tsx scripts/check-large-source-files.ts && tsx scripts/check-no-authored-js.ts && tsx scripts/check-no-sleeps.ts",

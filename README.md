@@ -178,7 +178,11 @@ This package also ships a Pi extension under `extensions/happy-paths.ts`.
 Install it into Pi:
 
 ```bash
+# from npm
 pi install npm:@continua-ai/happy-paths
+
+# or from source
+pi install git:github.com/continua-ai/happy-paths
 ```
 
 Defaults / env vars:
@@ -197,6 +201,8 @@ export HAPPY_PATHS_TEAM_TOKEN_FILE=~/.happy-paths/team-token.txt
 export HAPPY_PATHS_TRACE_ROOTS=~/.happy-paths/traces
 
 npx @continua-ai/happy-paths ingest ship
+# or
+npx github:continua-ai/happy-paths ingest ship
 ```
 
 ## Project identity overrides
