@@ -207,13 +207,14 @@ const PROBE_COMMAND_PREFIXES = new Set([
   "wget",
   "http",
   "fetch",
+  "jq",
   "rg",
   "ripgrep",
   "grep",
 ]);
 
 const PROBE_FAILURE_PATTERN =
-  /(\b404\b|not found|no matches? found|no result|does not exist|command exited with code 1)/i;
+  /(\b404\b|not found|no matches? found|no result|does not exist|command exited with code 1|jq: (?:parse )?error|parse error:|invalid numeric literal)/i;
 
 const TRANSIENT_EXTERNAL_PATTERN =
   /(timed out|timeout|connection reset|connection refused|temporarily unavailable|rate limit|429\b|\b50[234]\b|network is unreachable|tls handshake timeout|upstream)/i;
@@ -224,13 +225,13 @@ const TRANSIENT_TRACEBACK_COMMAND_PATTERN =
   /(generate_vertex_image\.py|vertex|post_linear_comment\.py|scripts\/search\.py|scripts\/content\.py|uploads\.linear\.app|api\.linear\.app)/i;
 
 const COMMAND_MISMATCH_PATTERN =
-  /(unknown option|unrecognized option|invalid option|invalid argument|usage:\s|did you mean .*--|without specifying a condition to a policy containing conditions is prohibited|run the command again with .*--condition)/i;
+  /(unknown option|unrecognized option|invalid option|invalid argument|usage:\s|did you mean .*--|without specifying a condition to a policy containing conditions is prohibited|run the command again with .*--condition|cannot use .* without specifying|syntax error near unexpected token|not allowed in a regex)/i;
 
 const ENVIRONMENT_MISMATCH_PATTERN =
-  /(permission denied|command not found|executable file not found|cannot find module|module not found|no such file or directory|missing dependency|denied by policy|externally-managed-environment)/i;
+  /(permission denied|command not found|executable file not found|executable doesn't exist|cannot find module|cannot find package|err_module_not_found|module not found|no such file or directory|missing dependency|denied by policy|externally-managed-environment|pw_run\.sh|ms-playwright)/i;
 
 const MISSING_CONTEXT_PATTERN =
-  /(undefined variable|is not defined|cannot read properties of undefined|null pointer|keyerror|attributeerror|typeerror|base branch policy prohibits the merge|could not resolve to a repository|host_mismatch|ownership_missing|provided domain does not appear to be verified|find: .*no such file or directory|ls: .*no such file or directory|permission denied for table)/i;
+  /(undefined variable|is not defined|cannot read properties of undefined|null pointer|keyerror|attributeerror|typeerror|syntaxerror|error ts|traceback \(most recent call last\)|base branch policy prohibits the merge|auto merge is not allowed|could not resolve to a repository|host_mismatch|ownership_missing|provided domain does not appear to be verified|credentials are no longer valid|authentication error|firebase login|reauthentication failed|cannot prompt during non-interactive execution|cloud domains api has not been used|some errors were emitted while running checks|some errors were emitted while applying fixes|"errors":\s*\[|"error":\s*\{|"message":\s*"not found"|"status":\s*"error"|(bearer_token|api[_-]?key|token|credentials).*missing|find: .*no such file or directory|ls: .*no such file or directory|permission denied for table)/i;
 
 const MISSING_CONTEXT_AUTH_FAILURE_PATTERN =
   /(http\s*40[13]\b|forbidden|unauthorized|api post .* failed: http\s*400\b)/i;
@@ -407,11 +408,13 @@ function isLikelyProbeCommand(command: string): boolean {
     return false;
   }
 
-  if (/&&|\|\||;/.test(rawCommand)) {
-    return false;
-  }
+  const segments = rawCommand
+    .split(/&&|\|\||;/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const probeSegment = segments[segments.length - 1] ?? rawCommand;
 
-  const firstToken = rawCommand.split(/\s+/, 1)[0] ?? "";
+  const firstToken = probeSegment.split(/\s+/, 1)[0] ?? "";
   if (!PROBE_COMMAND_PREFIXES.has(firstToken)) {
     return false;
   }
@@ -455,6 +458,14 @@ function isLikelyContextPermissionFailure(command: string, output: string): bool
   return MISSING_CONTEXT_AUTH_COMMAND_PATTERN.test(command);
 }
 
+function normalizeClassificationText(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[0-9a-f]{8,}/g, "<hex>")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function classifyTrajectoryIssue(event: TraceEvent): TrajectoryIssue | null {
   if (!isFailure(event)) {
     return null;
@@ -462,8 +473,8 @@ export function classifyTrajectoryIssue(event: TraceEvent): TrajectoryIssue | nu
 
   const command = commandFromPayload(event);
   const output = textFromPayload(event);
-  const normalizedCommand = normalizeText(command);
-  const normalizedOutput = normalizeText(output);
+  const normalizedCommand = normalizeClassificationText(command);
+  const normalizedOutput = normalizeClassificationText(output);
   const normalizedCombined = `${normalizedCommand}\n${normalizedOutput}`;
 
   if (
@@ -519,6 +530,21 @@ export function classifyTrajectoryIssue(event: TraceEvent): TrajectoryIssue | nu
       true,
       0.86,
       "Environment/dependency mismatch likely avoidable with recovered fix path.",
+    );
+  }
+
+  const trimmedOutput = output.trim();
+  if (
+    !trimmedOutput ||
+    trimmedOutput === "(no output)" ||
+    trimmedOutput.startsWith("(no output)")
+  ) {
+    return asClassifiedIssue(
+      event,
+      "environment_mismatch",
+      true,
+      0.55,
+      "Fallback: failure produced no output; treat as environment mismatch.",
     );
   }
 
