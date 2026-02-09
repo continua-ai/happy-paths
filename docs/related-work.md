@@ -34,6 +34,23 @@ literature.
 - **SWE-Effi** (2025): re-evaluates SWE agent effectiveness *under resource constraints*.
   - Paper: https://arxiv.org/html/2509.09853v2
 
+### More agentic coding benchmarks
+
+- **RepoBench** (ICLR 2024): repository-level code completion.
+  - Repo: https://github.com/Leolty/repobench
+
+- **AgentBench** (ICLR 2024): broader benchmark for LLMs as agents (not coding-only).
+  - Repo: https://github.com/THUDM/AgentBench
+
+- **ABC-Bench** (2026): agentic backend coding tasks.
+  - Paper: https://arxiv.org/abs/2601.11077
+
+- **ProjDevBench** (2026): end-to-end project development benchmark for coding agents.
+  - Paper: https://arxiv.org/html/2602.01655
+
+- **ACE-Bench** (2026): agentic coding in end-to-end development of complex features.
+  - OpenReview: https://openreview.net/forum?id=41xrZ3uGuI
+
 ## Context engineering + memory for agents
 
 - **Structured Context Engineering for File-Native Agentic Systems** (2026): schema accuracy + multi-file navigation.
@@ -76,6 +93,21 @@ but because the loop burns too much time/tokens getting to the right state.
 - GitHub’s own writeup of productivity/happiness study results:
   - https://github.blog/news-insights/research/research-quantifying-github-copilots-impact-on-developer-productivity-and-happiness/
 
+## Human factors: comprehension, review, and mental models
+
+A recurring theme in community discussion is that assistants shift the bottleneck
+from *writing* to *reviewing / understanding* (especially for large diffs). We
+want our metrics to reflect that reality.
+
+- **Towards Decoding Developer Cognition in the Age of AI Assistants** (2025).
+  - Paper: https://arxiv.org/html/2501.02684v1
+
+- **Understanding user mental models in AI-driven code completion tools** (2025).
+  - Link: https://www.sciencedirect.com/science/article/pii/S1071581925002058
+
+- **Human-AI Experience in Integrated Development Environments: A systematic literature review** (2025).
+  - Paper: https://arxiv.org/html/2503.06195v1
+
 ## Community discussion (Hacker News + Reddit)
 
 We also track practitioner discussion to understand what *actually* bottlenecks
@@ -92,10 +124,16 @@ engineering teams when they adopt these tools.
 - Aider thread (API cost, large-task iteration loops):
   - https://news.ycombinator.com/item?id=39995725
 
+- Claude Code (multi-session orchestration, workflow discussion):
+  - https://news.ycombinator.com/item?id=43307809
+
 ### Reddit threads
 
 - Claude Code velocity discussion: bottleneck shift from *typing* to *understanding/review*.
   - https://www.reddit.com/r/ClaudeAI/comments/1osv7is/using_claude_code_heavily_for_6_months_why_faster/
+
+- AI coding assistant comparisons (Cursor/Aider/Cline/Copilot, etc.):
+  - https://www.reddit.com/r/ClaudeAI/comments/1izmyps/claude_cursor_aider_cline_or_github_copilotwhich/
 
 ---
 
