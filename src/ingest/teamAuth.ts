@@ -60,7 +60,16 @@ function parseTeamTokensJson(raw: string): TeamTokenConfig[] {
       );
     }
 
-    configs.push({ teamId, token });
+    const trimmedTeamId = teamId.trim();
+    const trimmedToken = token.trim();
+
+    if (!trimmedTeamId || !trimmedToken) {
+      throw new Error(
+        "Invalid HAPPY_PATHS_TEAM_TOKENS_JSON: teamId/token must be non-empty strings.",
+      );
+    }
+
+    configs.push({ teamId: trimmedTeamId, token: trimmedToken });
   }
 
   if (configs.length === 0) {
@@ -82,14 +91,17 @@ export function loadTeamAuthFromEnv(env: NodeJS.ProcessEnv): LoadTeamAuthFromEnv
     };
   }
 
-  const teamId = env.HAPPY_PATHS_TEAM_ID ?? "default";
-  const token = env.HAPPY_PATHS_TEAM_TOKEN;
+  const rawTeamId = env.HAPPY_PATHS_TEAM_ID ?? "default";
+  const rawToken = env.HAPPY_PATHS_TEAM_TOKEN;
 
-  if (!token || !token.trim()) {
+  if (!rawToken || !rawToken.trim()) {
     throw new Error(
       "Missing HAPPY_PATHS_TEAM_TOKEN (or HAPPY_PATHS_TEAM_TOKENS_JSON).",
     );
   }
+
+  const teamId = rawTeamId.trim();
+  const token = rawToken.trim();
 
   return {
     auth: createSingleTeamAuth({ teamId, token }),
