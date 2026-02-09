@@ -31,3 +31,12 @@
 - Avoid N+1 I/O.
 - Bound concurrency by default.
 - Avoid sleep-based polling.
+
+## Public repo hygiene
+
+This repo is public OSS.
+
+- Do not commit private trace data (`.happy-paths/` is gitignored).
+- Avoid committing Continua-internal environment config (project IDs, internal
+  bucket names, deploy state). Keep env-specific infrastructure in a separate
+  ops repo.
