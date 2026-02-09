@@ -290,7 +290,7 @@ describe("trajectory outcome gate", () => {
         type: "tool_result",
         payload: {
           command:
-            "gcloud projects add-iam-policy-binding thoughter --member='serviceAccount:test' --role='roles/viewer' --quiet",
+            "gcloud projects add-iam-policy-binding example-project --member='serviceAccount:test' --role='roles/viewer' --quiet",
           output:
             "ERROR: (gcloud.projects.add-iam-policy-binding) Adding a binding without specifying a condition to a policy containing conditions is prohibited in non-interactive mode. Run the command again with --condition.",
           isError: true,

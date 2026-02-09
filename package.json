@@ -6,7 +6,10 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "README.md", "LICENSE"],
+  "bin": {
+    "happy-paths": "dist/cli/happy-paths.js"
+  },
+  "files": ["dist", "extensions", "README.md", "LICENSE"],
   "engines": {
     "node": ">=20.0.0"
   },

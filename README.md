@@ -171,6 +171,34 @@ const loop = createLocalLearningLoop();
 export default createPiTraceExtension({ loop });
 ```
 
+### pi package (plug-and-play)
+
+This package also ships a Pi extension under `extensions/happy-paths.ts`.
+
+Install it into Pi:
+
+```bash
+pi install npm:@continua-ai/happy-paths
+```
+
+Defaults / env vars:
+
+- Traces are stored at `~/.happy-paths/traces` by default.
+- Override trace root: `HAPPY_PATHS_TRACE_ROOT=...`
+- Set scope: `HAPPY_PATHS_TRACE_SCOPE=personal|team|public` (default: `personal`)
+- Tune hints: `HAPPY_PATHS_MAX_SUGGESTIONS=3`
+
+Ship traces to an HTTP ingest server:
+
+```bash
+export HAPPY_PATHS_INGEST_URL=https://...               # e.g. https://...a.run.app
+export HAPPY_PATHS_TEAM_ID=team_...                     # used for local shipper state scoping
+export HAPPY_PATHS_TEAM_TOKEN_FILE=~/.happy-paths/team-token.txt
+export HAPPY_PATHS_TRACE_ROOTS=~/.happy-paths/traces
+
+npx @continua-ai/happy-paths ingest ship
+```
+
 ## Project identity overrides
 
 Brand-specific identifiers are centralized in `src/core/projectIdentity.ts` and
