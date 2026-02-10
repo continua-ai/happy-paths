@@ -32,3 +32,8 @@ export interface EventDocumentBuilder {
 export interface LearningAdvisor {
   suggest(query: SearchQuery): Promise<LearningSuggestion[]>;
 }
+
+export type SearchResultReranker = (
+  query: SearchQuery,
+  results: SearchResult[],
+) => Promise<SearchResult[]> | SearchResult[];

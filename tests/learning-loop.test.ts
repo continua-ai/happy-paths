@@ -4,10 +4,28 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { FileTraceStore } from "../src/backends/local/fileTraceStore.js";
 import { InMemoryLexicalIndex } from "../src/backends/local/lexicalIndex.js";
+import type { TraceIndex } from "../src/core/interfaces.js";
 import { LearningLoop } from "../src/core/learningLoop.js";
 import { SimpleWrongTurnMiner } from "../src/core/miner.js";
+import type { IndexedDocument, SearchQuery, SearchResult } from "../src/core/types.js";
 
 const tempDirs: string[] = [];
+
+class StaticResultIndex implements TraceIndex {
+  constructor(private readonly results: SearchResult[]) {}
+
+  async upsert(_document: IndexedDocument): Promise<void> {
+    return;
+  }
+
+  async upsertMany(_documents: IndexedDocument[]): Promise<void> {
+    return;
+  }
+
+  async search(query: SearchQuery): Promise<SearchResult[]> {
+    return this.results.slice(0, query.limit ?? this.results.length);
+  }
+}
 
 afterEach(async () => {
   while (tempDirs.length > 0) {
@@ -55,5 +73,63 @@ describe("LearningLoop", () => {
 
     const suggestions = await loop.suggest({ text: "lint failed missing dependency" });
     expect(suggestions.length).toBeGreaterThan(0);
+  });
+
+  it("applies result reranker while preserving original recall", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const baseResults: [SearchResult, SearchResult] = [
+      {
+        document: {
+          id: "a",
+          sourceEventId: "event-a",
+          text: "first",
+        },
+        score: 0.2,
+      },
+      {
+        document: {
+          id: "b",
+          sourceEventId: "event-b",
+          text: "second",
+        },
+        score: 0.1,
+      },
+    ];
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex(baseResults),
+      resultReranker: async () => {
+        return [
+          {
+            ...baseResults[1],
+            score: 10,
+          },
+          {
+            ...baseResults[0],
+            score: 9,
+          },
+          {
+            document: {
+              id: "unknown",
+              sourceEventId: "event-unknown",
+              text: "ignored",
+            },
+            score: 999,
+          },
+        ];
+      },
+    });
+
+    const retrieval = await loop.retrieve({
+      text: "anything",
+      limit: 2,
+    });
+
+    expect(retrieval.map((hit) => hit.document.id)).toEqual(["b", "a"]);
+    expect(retrieval[0]?.score).toBe(10);
+    expect(retrieval).toHaveLength(2);
   });
 });

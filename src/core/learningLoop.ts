@@ -1,6 +1,7 @@
 import { DefaultEventDocumentBuilder } from "./documentBuilder.js";
 import type {
   EventDocumentBuilder,
+  SearchResultReranker,
   TraceIndex,
   TraceMiner,
   TraceStore,
@@ -19,6 +20,7 @@ export interface LearningLoopOptions {
   index: TraceIndex;
   miner?: TraceMiner;
   documentBuilder?: EventDocumentBuilder;
+  resultReranker?: SearchResultReranker;
 }
 
 export interface BootstrapFromStoreResult {
@@ -35,6 +37,7 @@ export class LearningLoop {
   private readonly index: TraceIndex;
   private readonly miner?: TraceMiner;
   private readonly documentBuilder: EventDocumentBuilder;
+  private readonly resultReranker?: SearchResultReranker;
   private hasBootstrappedFromStore = false;
 
   constructor(options: LearningLoopOptions) {
@@ -42,6 +45,7 @@ export class LearningLoop {
     this.index = options.index;
     this.miner = options.miner;
     this.documentBuilder = options.documentBuilder ?? new DefaultEventDocumentBuilder();
+    this.resultReranker = options.resultReranker;
   }
 
   async ingest(event: TraceEvent): Promise<void> {
@@ -93,7 +97,62 @@ export class LearningLoop {
   }
 
   async retrieve(query: SearchQuery): Promise<SearchResult[]> {
-    return this.index.search(query);
+    const initialResults = await this.index.search(query);
+
+    if (!this.resultReranker) {
+      return initialResults;
+    }
+
+    const rerankedResults = await this.resultReranker(query, initialResults);
+    return this.normalizeRerankedResults(initialResults, rerankedResults, query.limit);
+  }
+
+  private normalizeRerankedResults(
+    initialResults: SearchResult[],
+    rerankedResults: SearchResult[],
+    limit: number | undefined,
+  ): SearchResult[] {
+    if (rerankedResults.length === 0) {
+      return initialResults;
+    }
+
+    const byDocumentId = new Map<string, SearchResult>();
+    for (const result of initialResults) {
+      byDocumentId.set(result.document.id, result);
+    }
+
+    const normalized: SearchResult[] = [];
+    const seenDocumentIds = new Set<string>();
+
+    for (const candidate of rerankedResults) {
+      const candidateId = candidate.document.id;
+      const initial = byDocumentId.get(candidateId);
+      if (!initial) {
+        continue;
+      }
+      if (seenDocumentIds.has(candidateId)) {
+        continue;
+      }
+
+      normalized.push(candidate);
+      seenDocumentIds.add(candidateId);
+    }
+
+    for (const initial of initialResults) {
+      const candidateId = initial.document.id;
+      if (seenDocumentIds.has(candidateId)) {
+        continue;
+      }
+
+      normalized.push(initial);
+      seenDocumentIds.add(candidateId);
+    }
+
+    if (limit === undefined) {
+      return normalized;
+    }
+
+    return normalized.slice(0, Math.max(0, limit));
   }
 
   async mine(limit = 20): Promise<MinedArtifact[]> {
