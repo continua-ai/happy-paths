@@ -350,7 +350,7 @@ Optional overrides:
 
 ```bash
 npm run sync:evidence-web -- \
-  --web-repo-root ../happy-paths-web \
+  --web-repo-root ../happy-paths-private \
   --trace-root .happy-paths/feasibility-run \
   --pi-session-root ~/.pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469-- \
   --include-pi-session true \
