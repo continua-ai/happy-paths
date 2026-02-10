@@ -55,12 +55,43 @@ describe("CompositeTraceIndex", () => {
       primary,
       secondary,
       reciprocalRankFusionK: 0,
+      primaryWeight: 1,
+      secondaryWeight: 1,
     });
 
     const hits = await index.search({ text: "anything", limit: 3 });
 
     expect(hits.map((hit) => hit.document.id)).toEqual(["b", "a", "c"]);
     expect(hits[0]?.score).toBeGreaterThan(hits[1]?.score ?? 0);
+  });
+
+  it("supports source weighting that favors primary results", async () => {
+    const primary = new FakeIndex([result("a"), result("b")]);
+    const secondary = new FakeIndex([result("b"), result("c")]);
+
+    const index = new CompositeTraceIndex({
+      primary,
+      secondary,
+      reciprocalRankFusionK: 0,
+      primaryWeight: 3,
+      secondaryWeight: 1,
+    });
+
+    const hits = await index.search({ text: "anything", limit: 3 });
+
+    expect(hits.map((hit) => hit.document.id)).toEqual(["a", "b", "c"]);
+    expect((hits[0]?.score ?? 0) - (hits[1]?.score ?? 0)).toBeGreaterThan(0);
+  });
+
+  it("throws on non-positive source weights", () => {
+    const primary = new FakeIndex([]);
+
+    expect(() => {
+      new CompositeTraceIndex({
+        primary,
+        primaryWeight: 0,
+      });
+    }).toThrow("Source weight must be a finite positive number");
   });
 
   it("writes to both indexes on upsert and upsertMany", async () => {
