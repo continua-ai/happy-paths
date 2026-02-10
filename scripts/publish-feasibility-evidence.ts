@@ -336,7 +336,7 @@ function parseTraceInputFormat(value: string): TraceInputFormat {
 
 function parseArgs(argv: string[]): Options {
   const options: Options = {
-    webRepoRoot: path.resolve(process.cwd(), "../happy-paths-web"),
+    webRepoRoot: path.resolve(process.cwd(), "../happy-paths-private"),
     traceRoot: ".happy-paths/feasibility-run",
     piSessionRoot: DEFAULT_PI_SESSION_ROOT,
     includePiSession: true,

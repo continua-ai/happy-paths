@@ -380,7 +380,7 @@ describe("trajectory outcome gate", () => {
         type: "tool_result",
         payload: {
           command:
-            "cd /Users/dpetrou/src/happy-paths-web && find .github -maxdepth 3 -type f -name '*.yml'",
+            "cd /Users/dpetrou/src/happy-paths-private && find .github -maxdepth 3 -type f -name '*.yml'",
           output: "find: .github: No such file or directory",
           isError: true,
         },

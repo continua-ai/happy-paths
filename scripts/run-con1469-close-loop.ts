@@ -271,7 +271,7 @@ function parseArgs(argv: string[]): Options {
   const repoRoot = process.cwd();
   const options: Options = {
     mode: "full",
-    webRepoRoot: path.resolve(repoRoot, "../happy-paths-web"),
+    webRepoRoot: path.resolve(repoRoot, "../happy-paths-private"),
     includePiSession: true,
     linearIssue: "CON-1469",
     postLinear: false,
