@@ -135,4 +135,47 @@ describe("project identity", () => {
 
     expect(response?.message?.customType).toBe("future-project-name");
   });
+
+  it("does not inject hints when only the current prompt has been ingested", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "happy-paths-extension-self-filter-"));
+    tempDirs.push(dataDir);
+
+    const loop = createLocalLearningLoop({ dataDir });
+    const fakePi = new FakePiApi();
+    const sessionId = "session-self-filter";
+
+    createPiTraceExtension({
+      loop,
+      sessionId,
+      maxSuggestions: 3,
+    })(fakePi);
+
+    await fakePi.emit("input", {
+      text: "Investigate callable filepath behavior",
+      source: "interactive",
+    });
+
+    const response = await fakePi.emit("before_agent_start", {
+      prompt: "Investigate callable filepath behavior",
+      systemPrompt: "",
+    });
+
+    expect(response).toBeUndefined();
+
+    const stored = await readFile(
+      join(dataDir, "sessions", `${sessionId}.jsonl`),
+      "utf-8",
+    );
+    const checkpoint = stored
+      .trim()
+      .split("\n")
+      .map(
+        (line) =>
+          JSON.parse(line) as { type?: string; payload?: Record<string, unknown> },
+      )
+      .find((event) => event.type === "checkpoint");
+
+    expect(checkpoint?.payload?.hintCount).toBe(0);
+    expect(Number(checkpoint?.payload?.selfFilteredHintCount ?? 0)).toBe(0);
+  });
 });

@@ -132,4 +132,46 @@ describe("LearningLoop", () => {
     expect(retrieval[0]?.score).toBe(10);
     expect(retrieval).toHaveLength(2);
   });
+
+  it("deduplicates retrieval hints and filters low-confidence suggestions", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([
+        {
+          document: {
+            id: "doc-a",
+            sourceEventId: "event-a",
+            text: 'tool_result pi {"command":"rg -n "needle" tests"}',
+          },
+          score: 10,
+        },
+        {
+          document: {
+            id: "doc-a-dup",
+            sourceEventId: "event-a",
+            text: 'tool_result pi {"command":"rg -n "needle" tests"}',
+          },
+          score: 9,
+        },
+        {
+          document: {
+            id: "doc-b-low",
+            sourceEventId: "event-b",
+            text: 'tool_result pi {"text":"low signal"}',
+          },
+          score: 0.5,
+        },
+      ]),
+    });
+
+    const suggestions = await loop.suggest({ text: "find needle" });
+
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]?.evidenceEventIds).toEqual(["event-a"]);
+    expect(suggestions[0]?.rationale).toContain("Prior run used");
+    expect(suggestions[0]?.playbookMarkdown).toContain("Action:");
+  });
 });

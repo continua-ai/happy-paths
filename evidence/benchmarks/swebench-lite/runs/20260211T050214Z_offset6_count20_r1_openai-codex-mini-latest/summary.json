@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "generatedAtUtc": "2026-02-11T05:02:22.862Z",
+  "taskPack": {
+    "path": "/tmp/swebench_lite_50_tasks.json",
+    "generatedAtUtc": "2026-02-10T22:51:56.226Z",
+    "taskCount": 50,
+    "source": {
+      "dataset": "princeton-nlp/SWE-bench_Lite",
+      "config": "default",
+      "split": "test",
+      "offset": 0,
+      "count": 50,
+      "fetchedAtUtc": "2026-02-10T22:51:56.227Z",
+      "url": "https://datasets-server.huggingface.co/rows?dataset=princeton-nlp%2FSWE-bench_Lite&config=default&split=test&offset=0&length=50"
+    }
+  },
+  "traceRoot": "/tmp/swebench_pi_traces_phase123_power20",
+  "traceScan": {
+    "traceFilesFound": 40,
+    "traceEventFiles": 40,
+    "sessionsFound": 40
+  },
+  "commands": {
+    "observed": "/Users/dpetrou/src/contilore/node_modules/.bin/tsx scripts/run-observed-ab-long-horizon.ts --trace-root /tmp/swebench_pi_traces_phase123_power20 --format trace --tool-name bash --min-session-duration-ms 0 --min-total-latency-ms 0 --min-tool-result-count 1 --eval-ratio 0.5 --out /tmp/swebench_pi_results_phase123_power20/observed_ab_report.json",
+    "trajectory": "/Users/dpetrou/src/contilore/node_modules/.bin/tsx scripts/run-trajectory-outcome-long-horizon.ts --trace-root /tmp/swebench_pi_traces_phase123_power20 --format trace --tool-name bash --min-session-duration-ms 0 --min-total-latency-ms 0 --min-tool-result-count 1 --eval-ratio 0.5 --min-family-disjoint-pair-count 0 --out /tmp/swebench_pi_results_phase123_power20/trajectory_outcome_report.json"
+  },
+  "evaluationPolicy": {
+    "primaryLane": "task_paired_trajectory",
+    "secondaryLanes": ["observed_ab_long_horizon", "trajectory_outcome_long_horizon"],
+    "rationale": "Task-paired OFF/ON trajectories preserve path dependence even when long-horizon holdout pairing is sparse."
+  },
+  "qualityFlags": {
+    "taskPairedRunCountWithMetrics": 20,
+    "observedLongHorizonPairCount": 2,
+    "trajectoryLongHorizonPairCount": 0,
+    "longHorizonPairabilitySparse": true
+  },
+  "observed": {
+    "generatedAtUtc": "2026-02-11T05:02:22Z",
+    "pairCount": 2,
+    "gatePass": false,
+    "deadEndReduction": -0.5,
+    "wallTimeReduction": 0,
+    "tokenCountReduction": -0.2397478234764335,
+    "failures": [
+      "pair count 2 < 3",
+      "repeated dead-end reduction -0.500 < 0.250",
+      "wall-time reduction 0.000 < 0.100",
+      "token-count reduction -0.240 < 0.100",
+      "token-proxy reduction 0.063 < 0.100"
+    ]
+  },
+  "trajectory": {
+    "generatedAtUtc": "2026-02-11T05:02:22Z",
+    "primaryLane": "family_disjoint_eval",
+    "pairCount": 0,
+    "fullEvalPairCount": 2,
+    "familyDisjointPairCount": 0,
+    "gatePass": false,
+    "harmfulRetryReduction": 0,
+    "wallTimeReduction": 0,
+    "tokenCountReduction": 0,
+    "judgeableCoverageOn": 1,
+    "failures": [
+      "pair count 0 < 3",
+      "harmful retry reduction 0.000 < 0.200",
+      "wall-time reduction 0.000 < 0.100",
+      "token-count reduction 0.000 < 0.100",
+      "recovery success on 0.000 < 0.900"
+    ]
+  },
+  "taskPairedTrajectory": {
+    "sessionIdFormat": "swebench::<instance_id>::<off|on>::<replicate>",
+    "parsedSessionCount": 40,
+    "unparsedSessionCount": 0,
+    "diagnostics": {
+      "totalParsedSessions": 40,
+      "offSessionCount": 20,
+      "onSessionCount": 20,
+      "duplicateVariantAssignments": 0,
+      "unpairedOffSessions": 0,
+      "unpairedOnSessions": 0,
+      "pairedRunCount": 20,
+      "pairedInstanceCount": 20
+    },
+    "pairedRunCountWithMetrics": 20,
+    "totals": {
+      "failuresOff": 38,
+      "failuresOn": 29,
+      "harmfulOff": 1,
+      "harmfulOn": 4,
+      "wallTimeOffMs": 185584,
+      "wallTimeOnMs": 172882,
+      "tokenCountOff": 1362691,
+      "tokenCountOn": 1115240
+    },
+    "harmfulRetryRateOff": 0.02631578947368421,
+    "harmfulRetryRateOn": 0.13793103448275862,
+    "relativeHarmfulRetryReduction": -4.241379310344827,
+    "relativeWallTimeReduction": 0.06844340029312872,
+    "relativeTokenCountReduction": 0.18158995693080823
+  }
+}

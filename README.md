@@ -28,6 +28,7 @@
   <a href="docs/skateboard-e2e.md">Skateboard E2E</a> ·
   <a href="docs/metrics.md">Metrics</a> ·
   <a href="docs/related-work.md">Related work</a> ·
+  <a href="docs/swebench-lite-lane.md">SWE-bench lane</a> ·
   <a href="docs/roadmap.md">Roadmap</a>
 </p>
 
@@ -191,6 +192,8 @@ Defaults / env vars:
 - Override trace root: `HAPPY_PATHS_TRACE_ROOT=...`
 - Set scope: `HAPPY_PATHS_TRACE_SCOPE=personal|team|public` (default: `personal`)
 - Tune hints: `HAPPY_PATHS_MAX_SUGGESTIONS=3`
+- Override extension session id (for benchmark pairing):
+  `HAPPY_PATHS_SESSION_ID=swebench::<instance_id>::<off|on>::<replicate>`
 
 Ship traces to an HTTP ingest server:
 

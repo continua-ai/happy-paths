@@ -42,6 +42,10 @@
     "ingest:ship": "tsx scripts/ship-trace-bundles.ts",
     "loop:con1469": "tsx scripts/run-con1469-close-loop.ts",
     "loop:con1469:sweep-roots": "tsx scripts/sweep-con1469-long-horizon-roots.ts",
+    "benchmark:swebench-lite:fetch": "tsx scripts/fetch-swebench-lite-slice.ts",
+    "benchmark:swebench-lite:prompts": "tsx scripts/build-swebench-lite-prompts.ts",
+    "benchmark:swebench-lite:pi": "tsx scripts/run-swebench-lite-pi.ts",
+    "benchmark:swebench-lite:lane": "tsx scripts/run-swebench-lite-lane.ts",
     "typecheck": "tsc --noEmit",
     "verify": "biome check . && tsc --noEmit && vitest run",
     "verify:ci": "biome check . && tsc --noEmit && vitest run && npm run guardrails"

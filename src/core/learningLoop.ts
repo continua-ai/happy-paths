@@ -32,6 +32,76 @@ export interface BootstrapFromStoreOptions {
   force?: boolean;
 }
 
+const RETRIEVAL_SUGGESTION_LIMIT = 5;
+const MIN_RETRIEVAL_CONFIDENCE = 0.15;
+
+function clipForHint(text: string, maxLength = 180): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function decodeEscapedWhitespace(text: string): string {
+  return text.replace(/\\n/g, " ").replace(/\\t/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function commandFromDocumentText(text: string): string | null {
+  const match = /"command":"([^"]+)"/.exec(text);
+  if (!match?.[1]) {
+    return null;
+  }
+  return decodeEscapedWhitespace(match[1]);
+}
+
+function payloadTextFromDocumentText(text: string): string | null {
+  const match = /"text":"([^"]+)"/.exec(text);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const value = decodeEscapedWhitespace(match[1]);
+  if (!value) {
+    return null;
+  }
+
+  return value;
+}
+
+function retrievalHintFromText(text: string): { rationale: string; action: string } {
+  const command = commandFromDocumentText(text);
+  if (command) {
+    return {
+      rationale: `Prior run used \`${clipForHint(command, 90)}\` in a similar context.`,
+      action: `Try \`${clipForHint(command, 90)}\` and validate the result before proceeding.`,
+    };
+  }
+
+  const payloadText = payloadTextFromDocumentText(text);
+  if (payloadText) {
+    return {
+      rationale: `Prior tool result noted: ${clipForHint(payloadText)}.`,
+      action:
+        "Re-run a focused check around this symptom and verify with a targeted test.",
+    };
+  }
+
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return {
+    rationale: `Prior trace signal: ${clipForHint(normalized)}.`,
+    action: "Use this as context, then validate with a concrete command/test.",
+  };
+}
+
+function retrievalConfidence(score: number, topScore: number): number {
+  if (score <= 0 || topScore <= 0) {
+    return 0;
+  }
+
+  const normalized = score / topScore;
+  return Math.max(0, Math.min(0.95, normalized));
+}
+
 export class LearningLoop {
   private readonly store: TraceStore;
   private readonly index: TraceIndex;
@@ -166,16 +236,51 @@ export class LearningLoop {
     const retrieval = await this.retrieve(query);
     const suggestions: LearningSuggestion[] = [];
 
-    const topRetrieval = retrieval.slice(0, 5);
-    for (const [index, hit] of topRetrieval.entries()) {
+    const byEventId = new Map<string, SearchResult>();
+    for (const hit of retrieval) {
+      const key = hit.document.sourceEventId;
+      if (!byEventId.has(key)) {
+        byEventId.set(key, hit);
+      }
+    }
+
+    const dedupedRetrieval = [...byEventId.values()];
+    const topScore = dedupedRetrieval[0]?.score ?? 0;
+
+    for (const hit of dedupedRetrieval) {
+      const confidence = retrievalConfidence(hit.score, topScore);
+      if (confidence < MIN_RETRIEVAL_CONFIDENCE) {
+        continue;
+      }
+
+      const hint = retrievalHintFromText(hit.document.text);
       suggestions.push({
-        id: `retrieval-${index}-${hit.document.id}`,
-        title: "Related prior trace",
-        rationale: `Matched with score ${hit.score.toFixed(2)}.`,
-        confidence: Math.min(0.95, hit.score / 10),
+        id: `retrieval-${suggestions.length}-${hit.document.id}`,
+        title: "Related prior tool result",
+        rationale: hint.rationale,
+        confidence,
         evidenceEventIds: [hit.document.sourceEventId],
-        playbookMarkdown: `- Re-check: ${hit.document.text.slice(0, 220)}\n- Validate with tests before applying.`,
+        playbookMarkdown: `- Action: ${hint.action}\n- Validate with targeted tests/checks before applying.`,
       });
+
+      if (suggestions.length >= RETRIEVAL_SUGGESTION_LIMIT) {
+        break;
+      }
+    }
+
+    if (suggestions.length === 0 && dedupedRetrieval.length > 0) {
+      const fallback = dedupedRetrieval[0];
+      if (fallback) {
+        const hint = retrievalHintFromText(fallback.document.text);
+        suggestions.push({
+          id: `retrieval-fallback-${fallback.document.id}`,
+          title: "Related prior tool result",
+          rationale: hint.rationale,
+          confidence: Math.max(0.05, retrievalConfidence(fallback.score, topScore)),
+          evidenceEventIds: [fallback.document.sourceEventId],
+          playbookMarkdown: `- Action: ${hint.action}\n- Validate with targeted tests/checks before applying.`,
+        });
+      }
     }
 
     const mined = await this.mine(5);
@@ -190,6 +295,19 @@ export class LearningLoop {
       });
     }
 
-    return suggestions;
+    const dedupedSuggestions: LearningSuggestion[] = [];
+    const seenEvidenceKeys = new Set<string>();
+
+    for (const suggestion of suggestions) {
+      const evidenceKey = suggestion.evidenceEventIds.slice().sort().join("|");
+      const key = `${suggestion.title}|${evidenceKey}`;
+      if (seenEvidenceKeys.has(key)) {
+        continue;
+      }
+      seenEvidenceKeys.add(key);
+      dedupedSuggestions.push(suggestion);
+    }
+
+    return dedupedSuggestions;
   }
 }

@@ -24,3 +24,6 @@ export * from "./backends/local/index.js";
 
 export * from "./adapters/pi/types.js";
 export * from "./adapters/pi/extension.js";
+
+export * from "./benchmarks/swebenchLite.js";
+export * from "./benchmarks/swebenchTrajectory.js";

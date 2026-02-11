@@ -32,6 +32,34 @@ function clipText(text: string): string {
   return `${text.slice(0, MAX_DOC_TEXT_LENGTH)}\n...[truncated]`;
 }
 
+function parseSweBenchSessionIdentity(sessionId: string): {
+  instanceId: string;
+  variant: "off" | "on";
+  replicate: string;
+} | null {
+  const parts = sessionId.split("::");
+  if (parts.length !== 3 && parts.length !== 4) {
+    return null;
+  }
+
+  const [prefix, instanceId, variantRaw, replicateRaw] = parts;
+  if (prefix !== "swebench") {
+    return null;
+  }
+
+  const variant = variantRaw === "off" || variantRaw === "on" ? variantRaw : null;
+  if (!instanceId || !variant) {
+    return null;
+  }
+
+  const replicate = (replicateRaw ?? "r1").trim().toLowerCase() || "r1";
+  return {
+    instanceId,
+    variant,
+    replicate,
+  };
+}
+
 export class DefaultEventDocumentBuilder implements EventDocumentBuilder {
   build(event: TraceEvent): IndexedDocument[] {
     const payloadText = toText(event.payload);
@@ -43,6 +71,13 @@ export class DefaultEventDocumentBuilder implements EventDocumentBuilder {
       scope: event.scope,
       sessionId: event.sessionId,
     };
+
+    const swebenchIdentity = parseSweBenchSessionIdentity(event.sessionId);
+    if (swebenchIdentity) {
+      metadata.swebenchInstanceId = swebenchIdentity.instanceId;
+      metadata.swebenchVariant = swebenchIdentity.variant;
+      metadata.swebenchReplicate = swebenchIdentity.replicate;
+    }
 
     if (event.agentId) {
       metadata.agentId = event.agentId;

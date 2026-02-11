@@ -1,0 +1,317 @@
+{
+  "schemaVersion": 1,
+  "generatedAtUtc": "2026-02-11T05:02:22Z",
+  "traceRoot": "/tmp/swebench_pi_traces_phase123_power20",
+  "format": "trace",
+  "toolName": "bash",
+  "files": {
+    "traceFilesFound": 40,
+    "traceEventFilesScanned": 40,
+    "piSessionFilesScanned": 0,
+    "skippedForFormat": 0
+  },
+  "holdout": {
+    "minSessionDurationMs": 0,
+    "minTotalLatencyMs": 0,
+    "minToolResultCount": 1,
+    "evalRatio": 0.5,
+    "totalSessionsParsed": 40,
+    "totalLongHorizonSessions": 36,
+    "trainSessionCount": 18,
+    "evalSessionCount": 18,
+    "familyOverlap": {
+      "trainFamilyCount": 17,
+      "evalFamilyCount": 19,
+      "overlappingFamilyCount": 1,
+      "overlapRateByEvalFamilies": 0.05263157894736842,
+      "overlapRateByTrainFamilies": 0.058823529411764705,
+      "overlappingFamilies": ["offset <num> is beyond end of file (<num> lines total)"]
+    }
+  },
+  "trainEpisodeCount": 22,
+  "evalEpisodeCount": 21,
+  "thresholds": {
+    "minPairCount": 3,
+    "minRelativeDeadEndReduction": 0.25,
+    "minRelativeWallTimeReduction": 0.1,
+    "minRelativeTokenCountReduction": 0.1,
+    "minRelativeTokenProxyReduction": 0.1,
+    "minRecoverySuccessRateOn": 0.9,
+    "maxRecoverySuccessRateDrop": 0
+  },
+  "pairing": {
+    "minOccurrencesPerFamily": 2,
+    "maxWallTimeRatio": 4,
+    "maxTokenCountRatio": 4
+  },
+  "pairingDiagnostics": {
+    "familiesSeen": 19,
+    "familiesEligible": 1,
+    "candidateTransitions": 2,
+    "droppedSameSession": 0,
+    "droppedOutlierRatio": 0,
+    "pairsBuilt": 2
+  },
+  "aggregate": {
+    "totalPairs": 2,
+    "totalRetriesOff": 2,
+    "totalRetriesOn": 3,
+    "repeatedDeadEndRateOff": 1,
+    "repeatedDeadEndRateOn": 1.5,
+    "recoverySuccessRateOff": 1,
+    "recoverySuccessRateOn": 1,
+    "totalWallTimeOffMs": 0,
+    "totalWallTimeOnMs": 0,
+    "totalTokenCountOff": 16655,
+    "totalTokenCountOn": 20648,
+    "totalTokenProxyOff": 11432.6,
+    "totalTokenProxyOn": 10715.2,
+    "totalCostOffUsd": 0.0183,
+    "totalCostOnUsd": 0.0216075,
+    "relativeRepeatedDeadEndRateReduction": -0.5,
+    "relativeWallTimeReduction": 0,
+    "relativeTokenCountReduction": -0.2397478234764335,
+    "relativeTokenProxyReduction": 0.06275038049087693,
+    "absoluteRecoverySuccessRateDelta": 0
+  },
+  "trustSummary": {
+    "method": "paired_bootstrap",
+    "sampleCount": 2000,
+    "confidenceLevel": 0.95,
+    "deadEndReduction": {
+      "low": -1,
+      "median": -0.5,
+      "high": 0
+    },
+    "wallTimeReduction": {
+      "low": 0,
+      "median": 0,
+      "high": 0
+    },
+    "tokenCountReduction": {
+      "low": -1.4872487755446715,
+      "median": -0.2397478234764335,
+      "high": 0.44838829886342463
+    },
+    "tokenProxyReduction": {
+      "low": -0.07427970099426656,
+      "median": 0.06275038049087693,
+      "high": 0.1903056916061475
+    },
+    "expectedDeadEndsAvoided": {
+      "low": -2,
+      "median": -1,
+      "high": 0
+    }
+  },
+  "gateResult": {
+    "pass": false,
+    "failures": [
+      "pair count 2 < 3",
+      "repeated dead-end reduction -0.500 < 0.250",
+      "wall-time reduction 0.000 < 0.100",
+      "token-count reduction -0.240 < 0.100",
+      "token-proxy reduction 0.063 < 0.100"
+    ]
+  },
+  "strata": {
+    "model": [
+      {
+        "key": "unknown",
+        "pairCount": 2,
+        "episodeCount": 21,
+        "sessionCount": 13,
+        "aggregate": {
+          "totalPairs": 2,
+          "totalRetriesOff": 2,
+          "totalRetriesOn": 3,
+          "repeatedDeadEndRateOff": 1,
+          "repeatedDeadEndRateOn": 1.5,
+          "recoverySuccessRateOff": 1,
+          "recoverySuccessRateOn": 1,
+          "totalWallTimeOffMs": 0,
+          "totalWallTimeOnMs": 0,
+          "totalTokenCountOff": 16655,
+          "totalTokenCountOn": 20648,
+          "totalTokenProxyOff": 11432.6,
+          "totalTokenProxyOn": 10715.2,
+          "totalCostOffUsd": 0.0183,
+          "totalCostOnUsd": 0.0216075,
+          "relativeRepeatedDeadEndRateReduction": -0.5,
+          "relativeWallTimeReduction": 0,
+          "relativeTokenCountReduction": -0.2397478234764335,
+          "relativeTokenProxyReduction": 0.06275038049087693,
+          "absoluteRecoverySuccessRateDelta": 0
+        },
+        "gateResult": {
+          "pass": false,
+          "failures": [
+            "pair count 2 < 3",
+            "repeated dead-end reduction -0.500 < 0.250",
+            "wall-time reduction 0.000 < 0.100",
+            "token-count reduction -0.240 < 0.100",
+            "token-proxy reduction 0.063 < 0.100"
+          ]
+        }
+      }
+    ],
+    "toolSurface": [
+      {
+        "key": "other",
+        "pairCount": 2,
+        "episodeCount": 3,
+        "sessionCount": 3,
+        "aggregate": {
+          "totalPairs": 2,
+          "totalRetriesOff": 2,
+          "totalRetriesOn": 3,
+          "repeatedDeadEndRateOff": 1,
+          "repeatedDeadEndRateOn": 1.5,
+          "recoverySuccessRateOff": 1,
+          "recoverySuccessRateOn": 1,
+          "totalWallTimeOffMs": 0,
+          "totalWallTimeOnMs": 0,
+          "totalTokenCountOff": 16655,
+          "totalTokenCountOn": 20648,
+          "totalTokenProxyOff": 11432.6,
+          "totalTokenProxyOn": 10715.2,
+          "totalCostOffUsd": 0.0183,
+          "totalCostOnUsd": 0.0216075,
+          "relativeRepeatedDeadEndRateReduction": -0.5,
+          "relativeWallTimeReduction": 0,
+          "relativeTokenCountReduction": -0.2397478234764335,
+          "relativeTokenProxyReduction": 0.06275038049087693,
+          "absoluteRecoverySuccessRateDelta": 0
+        },
+        "gateResult": {
+          "pass": false,
+          "failures": [
+            "pair count 2 < 3",
+            "repeated dead-end reduction -0.500 < 0.250",
+            "wall-time reduction 0.000 < 0.100",
+            "token-count reduction -0.240 < 0.100",
+            "token-proxy reduction 0.063 < 0.100"
+          ]
+        }
+      },
+      {
+        "key": "shell",
+        "pairCount": 0,
+        "episodeCount": 18,
+        "sessionCount": 12,
+        "aggregate": {
+          "totalPairs": 0,
+          "totalRetriesOff": 0,
+          "totalRetriesOn": 0,
+          "repeatedDeadEndRateOff": 0,
+          "repeatedDeadEndRateOn": 0,
+          "recoverySuccessRateOff": 0,
+          "recoverySuccessRateOn": 0,
+          "totalWallTimeOffMs": 0,
+          "totalWallTimeOnMs": 0,
+          "totalTokenCountOff": 0,
+          "totalTokenCountOn": 0,
+          "totalTokenProxyOff": 0,
+          "totalTokenProxyOn": 0,
+          "totalCostOffUsd": 0,
+          "totalCostOnUsd": 0,
+          "relativeRepeatedDeadEndRateReduction": 0,
+          "relativeWallTimeReduction": 0,
+          "relativeTokenCountReduction": 0,
+          "relativeTokenProxyReduction": 0,
+          "absoluteRecoverySuccessRateDelta": 0
+        },
+        "gateResult": {
+          "pass": false,
+          "failures": [
+            "pair count 0 < 3",
+            "repeated dead-end reduction 0.000 < 0.250",
+            "wall-time reduction 0.000 < 0.100",
+            "token-count reduction 0.000 < 0.100",
+            "token-proxy reduction 0.000 < 0.100",
+            "recovery success on 0.000 < 0.900"
+          ]
+        }
+      }
+    ],
+    "modelToolSurface": [
+      {
+        "key": "unknown__other",
+        "pairCount": 2,
+        "episodeCount": 3,
+        "sessionCount": 3,
+        "aggregate": {
+          "totalPairs": 2,
+          "totalRetriesOff": 2,
+          "totalRetriesOn": 3,
+          "repeatedDeadEndRateOff": 1,
+          "repeatedDeadEndRateOn": 1.5,
+          "recoverySuccessRateOff": 1,
+          "recoverySuccessRateOn": 1,
+          "totalWallTimeOffMs": 0,
+          "totalWallTimeOnMs": 0,
+          "totalTokenCountOff": 16655,
+          "totalTokenCountOn": 20648,
+          "totalTokenProxyOff": 11432.6,
+          "totalTokenProxyOn": 10715.2,
+          "totalCostOffUsd": 0.0183,
+          "totalCostOnUsd": 0.0216075,
+          "relativeRepeatedDeadEndRateReduction": -0.5,
+          "relativeWallTimeReduction": 0,
+          "relativeTokenCountReduction": -0.2397478234764335,
+          "relativeTokenProxyReduction": 0.06275038049087693,
+          "absoluteRecoverySuccessRateDelta": 0
+        },
+        "gateResult": {
+          "pass": false,
+          "failures": [
+            "pair count 2 < 3",
+            "repeated dead-end reduction -0.500 < 0.250",
+            "wall-time reduction 0.000 < 0.100",
+            "token-count reduction -0.240 < 0.100",
+            "token-proxy reduction 0.063 < 0.100"
+          ]
+        }
+      },
+      {
+        "key": "unknown__shell",
+        "pairCount": 0,
+        "episodeCount": 18,
+        "sessionCount": 12,
+        "aggregate": {
+          "totalPairs": 0,
+          "totalRetriesOff": 0,
+          "totalRetriesOn": 0,
+          "repeatedDeadEndRateOff": 0,
+          "repeatedDeadEndRateOn": 0,
+          "recoverySuccessRateOff": 0,
+          "recoverySuccessRateOn": 0,
+          "totalWallTimeOffMs": 0,
+          "totalWallTimeOnMs": 0,
+          "totalTokenCountOff": 0,
+          "totalTokenCountOn": 0,
+          "totalTokenProxyOff": 0,
+          "totalTokenProxyOn": 0,
+          "totalCostOffUsd": 0,
+          "totalCostOnUsd": 0,
+          "relativeRepeatedDeadEndRateReduction": 0,
+          "relativeWallTimeReduction": 0,
+          "relativeTokenCountReduction": 0,
+          "relativeTokenProxyReduction": 0,
+          "absoluteRecoverySuccessRateDelta": 0
+        },
+        "gateResult": {
+          "pass": false,
+          "failures": [
+            "pair count 0 < 3",
+            "repeated dead-end reduction 0.000 < 0.250",
+            "wall-time reduction 0.000 < 0.100",
+            "token-count reduction 0.000 < 0.100",
+            "token-proxy reduction 0.000 < 0.100",
+            "recovery success on 0.000 < 0.900"
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -63,10 +63,19 @@ function maxSuggestionsFromEnv(): number {
   return Math.max(0, Math.floor(parsed));
 }
 
+function sessionIdFromEnv(): string | undefined {
+  const raw = (process.env.HAPPY_PATHS_SESSION_ID ?? "").trim();
+  if (!raw) {
+    return undefined;
+  }
+  return raw;
+}
+
 export default function happyPathsPiExtension(pi: PiLikeApi): void {
   const traceRoot = traceRootFromEnv();
   const scope = scopeFromEnv();
   const maxSuggestions = maxSuggestionsFromEnv();
+  const sessionId = sessionIdFromEnv();
 
   const loop = createLocalLearningLoop({ dataDir: traceRoot });
   let bootstrapped = false;
@@ -92,6 +101,7 @@ export default function happyPathsPiExtension(pi: PiLikeApi): void {
   createPiTraceExtension({
     loop,
     scope,
+    sessionId,
     maxSuggestions,
   })(pi);
 }
