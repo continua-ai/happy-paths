@@ -196,6 +196,8 @@ Defaults / env vars:
   tool-result history.
 - Learned wrong-turn artifacts are only injected when retrieval produces no
   evidence-grounded hints.
+- Broad/low-signal commands are deprioritized in retrieval hints; they only
+  appear as explicit low-signal fallback hints when no better evidence exists.
 - Override extension session id (for benchmark pairing):
   `HAPPY_PATHS_SESSION_ID=swebench::<instance_id>::<off|on>::<replicate>`
 

@@ -51,6 +51,7 @@ interface RetrievalHint {
   rationale: string;
   action: string;
   actionKey: string;
+  confidenceScale: number;
 }
 
 function decodeEscapedWhitespace(text: string): string {
@@ -123,6 +124,53 @@ function payloadTextFromDocumentText(text: string): string | null {
   return value && value.length > 0 ? value : null;
 }
 
+function isLowSignalCommand(command: string): boolean {
+  const normalized = command.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const trivialPatterns = [
+    /^(ls|pwd|whoami|date)(\s|$)/,
+    /^(echo|cat|head|tail|wc)(\s|$)/,
+    /^git\s+status(\s|$)/,
+  ];
+
+  if (trivialPatterns.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+
+  const broadTestCommandPattern =
+    /^(?:python\s+-m\s+)?(?:pytest|npm\s+(?:run\s+)?test|pnpm\s+test|yarn\s+test|go\s+test|pants\s+test)(\s|$)/;
+
+  if (!broadTestCommandPattern.test(normalized)) {
+    return false;
+  }
+
+  const targetedMarkers = [
+    /\s-k\s+\S+/,
+    /\s--maxfail(?:=|\s)\d+/,
+    /\s--filter\s+\S+/,
+    /\s--grep\s+\S+/,
+    /\//,
+    /::/,
+  ];
+
+  const hasTargetMarker = targetedMarkers.some((pattern) => {
+    return pattern.test(normalized);
+  });
+
+  return !hasTargetMarker;
+}
+
+function commandConfidenceScale(command: string): number {
+  if (isLowSignalCommand(command)) {
+    return 0.15;
+  }
+
+  return 1;
+}
+
 function toolResultOutcomeFromSearchResult(hit: SearchResult): ToolResultOutcome {
   const metadata = hit.document.metadata;
   if (metadata?.eventType !== "tool_result") {
@@ -149,6 +197,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
         rationale: `Prior run hit an error after \`${clippedCommand}\` in a similar context.`,
         action: `Avoid retrying \`${clippedCommand}\` unchanged; verify the root cause has changed first.`,
         actionKey: `failure-command:${command.toLowerCase()}`,
+        confidenceScale: 1,
       };
     }
 
@@ -156,6 +205,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
       rationale: `Prior run used \`${clippedCommand}\` in a similar context with a non-error tool result.`,
       action: `Try \`${clippedCommand}\` and validate the result before proceeding.`,
       actionKey: `command:${command.toLowerCase()}`,
+      confidenceScale: commandConfidenceScale(command),
     };
   }
 
@@ -167,6 +217,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
         action:
           "Before retrying, confirm the underlying condition changed and run a narrower diagnostic first.",
         actionKey: `failure-payload:${payloadText.slice(0, 60).toLowerCase()}`,
+        confidenceScale: 1,
       };
     }
 
@@ -175,6 +226,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
       action:
         "Re-run a focused check around this symptom and verify with a targeted test.",
       actionKey: `payload:${payloadText.slice(0, 60).toLowerCase()}`,
+      confidenceScale: 1,
     };
   }
 
@@ -185,6 +237,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
       action:
         "Treat this as a warning and verify assumptions before repeating the same approach.",
       actionKey: `failure-text:${normalized.slice(0, 60).toLowerCase()}`,
+      confidenceScale: 1,
     };
   }
 
@@ -192,6 +245,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
     rationale: `Prior trace signal: ${clipForHint(normalized)}.`,
     action: "Use this as context, then validate with a concrete command/test.",
     actionKey: `text:${normalized.slice(0, 60).toLowerCase()}`,
+    confidenceScale: 1,
   };
 }
 
@@ -356,19 +410,36 @@ export class LearningLoop {
 
     const topNonFailureScore = nonFailureRetrieval[0]?.score ?? 0;
     const seenActionKeys = new Set<string>();
+    const deprioritizedCandidates: Array<{
+      hit: SearchResult;
+      hint: RetrievalHint;
+      confidence: number;
+    }> = [];
 
     for (const hit of nonFailureRetrieval) {
-      const confidence = retrievalConfidence(hit.score, topNonFailureScore);
-      if (confidence < MIN_RETRIEVAL_CONFIDENCE) {
-        continue;
-      }
-
       const hint = retrievalHintFromText(hit.document.text, "positive");
       if (seenActionKeys.has(hint.actionKey)) {
         continue;
       }
-      seenActionKeys.add(hint.actionKey);
 
+      const baseConfidence = retrievalConfidence(hit.score, topNonFailureScore);
+      if (baseConfidence < MIN_RETRIEVAL_CONFIDENCE) {
+        continue;
+      }
+
+      const confidence = baseConfidence * hint.confidenceScale;
+      if (confidence < MIN_RETRIEVAL_CONFIDENCE) {
+        if (hint.confidenceScale < 1) {
+          deprioritizedCandidates.push({
+            hit,
+            hint,
+            confidence,
+          });
+        }
+        continue;
+      }
+
+      seenActionKeys.add(hint.actionKey);
       suggestions.push({
         id: `retrieval-${suggestions.length}-${hit.document.id}`,
         title: "Related prior tool result",
@@ -380,6 +451,27 @@ export class LearningLoop {
 
       if (suggestions.length >= RETRIEVAL_SUGGESTION_LIMIT) {
         break;
+      }
+    }
+
+    if (suggestions.length === 0 && deprioritizedCandidates.length > 0) {
+      deprioritizedCandidates.sort((left, right) => {
+        if (right.confidence !== left.confidence) {
+          return right.confidence - left.confidence;
+        }
+        return left.hit.document.id.localeCompare(right.hit.document.id);
+      });
+
+      const fallback = deprioritizedCandidates[0];
+      if (fallback) {
+        suggestions.push({
+          id: `retrieval-low-signal-${fallback.hit.document.id}`,
+          title: "Low-signal prior tool result",
+          rationale: fallback.hint.rationale,
+          confidence: Math.max(0.15, fallback.confidence),
+          evidenceEventIds: [fallback.hit.document.sourceEventId],
+          playbookMarkdown: `- Action: ${fallback.hint.action}\n- This prior command looked low-signal; prefer a narrower validation command when possible.`,
+        });
       }
     }
 
