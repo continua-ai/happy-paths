@@ -12,7 +12,10 @@ describe("DefaultEventDocumentBuilder", () => {
       scope: "public",
       type: "tool_result",
       payload: {
+        toolName: "bash",
+        command: "npm test",
         text: "ok",
+        isError: false,
       },
       metrics: {
         outcome: "success",
@@ -23,6 +26,10 @@ describe("DefaultEventDocumentBuilder", () => {
     expect(baseDoc?.metadata?.swebenchInstanceId).toBe("django__django-10914");
     expect(baseDoc?.metadata?.swebenchVariant).toBe("on");
     expect(baseDoc?.metadata?.swebenchReplicate).toBe("r2");
+    expect(baseDoc?.metadata?.toolName).toBe("bash");
+    expect(baseDoc?.metadata?.command).toBe("npm test");
+    expect(baseDoc?.metadata?.isError).toBe(false);
+    expect(baseDoc?.metadata?.outcome).toBe("success");
   });
 
   it("does not add swebench metadata for non-swebench sessions", () => {

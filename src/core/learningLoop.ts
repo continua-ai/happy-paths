@@ -33,7 +33,8 @@ export interface BootstrapFromStoreOptions {
 }
 
 const RETRIEVAL_SUGGESTION_LIMIT = 5;
-const MIN_RETRIEVAL_CONFIDENCE = 0.15;
+const MIN_RETRIEVAL_CONFIDENCE = 0.2;
+const MIN_FAILURE_WARNING_CONFIDENCE = 0.2;
 
 function clipForHint(text: string, maxLength = 180): string {
   if (text.length <= maxLength) {
@@ -42,54 +43,155 @@ function clipForHint(text: string, maxLength = 180): string {
   return `${text.slice(0, maxLength - 1)}…`;
 }
 
+type ToolResultOutcome = "success" | "failure" | "unknown";
+
+type RetrievalHintKind = "positive" | "failure_warning";
+
+interface RetrievalHint {
+  rationale: string;
+  action: string;
+  actionKey: string;
+}
+
 function decodeEscapedWhitespace(text: string): string {
   return text.replace(/\\n/g, " ").replace(/\\t/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function commandFromDocumentText(text: string): string | null {
-  const match = /"command":"([^"]+)"/.exec(text);
-  if (!match?.[1]) {
-    return null;
+function decodeJsonString(value: string): string {
+  try {
+    const decoded = JSON.parse(`"${value}"`) as unknown;
+    if (typeof decoded === "string") {
+      return decoded;
+    }
+  } catch {
+    // Fall through to best-effort unescape handling.
   }
-  return decodeEscapedWhitespace(match[1]);
-}
-
-function payloadTextFromDocumentText(text: string): string | null {
-  const match = /"text":"([^"]+)"/.exec(text);
-  if (!match?.[1]) {
-    return null;
-  }
-
-  const value = decodeEscapedWhitespace(match[1]);
-  if (!value) {
-    return null;
-  }
-
   return value;
 }
 
-function retrievalHintFromText(text: string): { rationale: string; action: string } {
+function parsePayloadObjectFromDocumentText(
+  text: string,
+): Record<string, unknown> | null {
+  const objectStart = text.indexOf("{");
+  if (objectStart < 0) {
+    return null;
+  }
+
+  const candidate = text.slice(objectStart);
+  try {
+    const parsed = JSON.parse(candidate) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function jsonStringFieldFromDocumentText(
+  text: string,
+  fieldName: string,
+): string | null {
+  const pattern = new RegExp(`"${fieldName}":"((?:\\\\.|[^\"])+)"`);
+  const match = pattern.exec(text);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return decodeEscapedWhitespace(decodeJsonString(match[1]));
+}
+
+function commandFromDocumentText(text: string): string | null {
+  const payload = parsePayloadObjectFromDocumentText(text);
+  if (payload && typeof payload.command === "string") {
+    return decodeEscapedWhitespace(payload.command);
+  }
+
+  return jsonStringFieldFromDocumentText(text, "command");
+}
+
+function payloadTextFromDocumentText(text: string): string | null {
+  const payload = parsePayloadObjectFromDocumentText(text);
+  if (payload && typeof payload.text === "string") {
+    const value = decodeEscapedWhitespace(payload.text);
+    return value || null;
+  }
+
+  const value = jsonStringFieldFromDocumentText(text, "text");
+  return value && value.length > 0 ? value : null;
+}
+
+function toolResultOutcomeFromSearchResult(hit: SearchResult): ToolResultOutcome {
+  const metadata = hit.document.metadata;
+  if (metadata?.eventType !== "tool_result") {
+    return "unknown";
+  }
+
+  if (metadata.isError === true || metadata.outcome === "failure") {
+    return "failure";
+  }
+
+  if (metadata.isError === false || metadata.outcome === "success") {
+    return "success";
+  }
+
+  return "unknown";
+}
+
+function retrievalHintFromText(text: string, kind: RetrievalHintKind): RetrievalHint {
   const command = commandFromDocumentText(text);
   if (command) {
+    const clippedCommand = clipForHint(command, 90);
+    if (kind === "failure_warning") {
+      return {
+        rationale: `Prior run hit an error after \`${clippedCommand}\` in a similar context.`,
+        action: `Avoid retrying \`${clippedCommand}\` unchanged; verify the root cause has changed first.`,
+        actionKey: `failure-command:${command.toLowerCase()}`,
+      };
+    }
+
     return {
-      rationale: `Prior run used \`${clipForHint(command, 90)}\` in a similar context.`,
-      action: `Try \`${clipForHint(command, 90)}\` and validate the result before proceeding.`,
+      rationale: `Prior run used \`${clippedCommand}\` in a similar context with a non-error tool result.`,
+      action: `Try \`${clippedCommand}\` and validate the result before proceeding.`,
+      actionKey: `command:${command.toLowerCase()}`,
     };
   }
 
   const payloadText = payloadTextFromDocumentText(text);
   if (payloadText) {
+    if (kind === "failure_warning") {
+      return {
+        rationale: `Prior tool result reported an error: ${clipForHint(payloadText)}.`,
+        action:
+          "Before retrying, confirm the underlying condition changed and run a narrower diagnostic first.",
+        actionKey: `failure-payload:${payloadText.slice(0, 60).toLowerCase()}`,
+      };
+    }
+
     return {
       rationale: `Prior tool result noted: ${clipForHint(payloadText)}.`,
       action:
         "Re-run a focused check around this symptom and verify with a targeted test.",
+      actionKey: `payload:${payloadText.slice(0, 60).toLowerCase()}`,
     };
   }
 
   const normalized = text.replace(/\s+/g, " ").trim();
+  if (kind === "failure_warning") {
+    return {
+      rationale: `Prior trace signal showed a likely failure: ${clipForHint(normalized)}.`,
+      action:
+        "Treat this as a warning and verify assumptions before repeating the same approach.",
+      actionKey: `failure-text:${normalized.slice(0, 60).toLowerCase()}`,
+    };
+  }
+
   return {
     rationale: `Prior trace signal: ${clipForHint(normalized)}.`,
     action: "Use this as context, then validate with a concrete command/test.",
+    actionKey: `text:${normalized.slice(0, 60).toLowerCase()}`,
   };
 }
 
@@ -245,15 +347,28 @@ export class LearningLoop {
     }
 
     const dedupedRetrieval = [...byEventId.values()];
-    const topScore = dedupedRetrieval[0]?.score ?? 0;
+    const nonFailureRetrieval = dedupedRetrieval.filter((hit) => {
+      return toolResultOutcomeFromSearchResult(hit) !== "failure";
+    });
+    const failureRetrieval = dedupedRetrieval.filter((hit) => {
+      return toolResultOutcomeFromSearchResult(hit) === "failure";
+    });
 
-    for (const hit of dedupedRetrieval) {
-      const confidence = retrievalConfidence(hit.score, topScore);
+    const topNonFailureScore = nonFailureRetrieval[0]?.score ?? 0;
+    const seenActionKeys = new Set<string>();
+
+    for (const hit of nonFailureRetrieval) {
+      const confidence = retrievalConfidence(hit.score, topNonFailureScore);
       if (confidence < MIN_RETRIEVAL_CONFIDENCE) {
         continue;
       }
 
-      const hint = retrievalHintFromText(hit.document.text);
+      const hint = retrievalHintFromText(hit.document.text, "positive");
+      if (seenActionKeys.has(hint.actionKey)) {
+        continue;
+      }
+      seenActionKeys.add(hint.actionKey);
+
       suggestions.push({
         id: `retrieval-${suggestions.length}-${hit.document.id}`,
         title: "Related prior tool result",
@@ -268,18 +383,25 @@ export class LearningLoop {
       }
     }
 
-    if (suggestions.length === 0 && dedupedRetrieval.length > 0) {
-      const fallback = dedupedRetrieval[0];
-      if (fallback) {
-        const hint = retrievalHintFromText(fallback.document.text);
-        suggestions.push({
-          id: `retrieval-fallback-${fallback.document.id}`,
-          title: "Related prior tool result",
-          rationale: hint.rationale,
-          confidence: Math.max(0.05, retrievalConfidence(fallback.score, topScore)),
-          evidenceEventIds: [fallback.document.sourceEventId],
-          playbookMarkdown: `- Action: ${hint.action}\n- Validate with targeted tests/checks before applying.`,
-        });
+    if (suggestions.length === 0 && failureRetrieval.length > 0) {
+      const fallbackFailure = failureRetrieval[0];
+      const topFailureScore = failureRetrieval[0]?.score ?? 0;
+      if (fallbackFailure) {
+        const confidence = retrievalConfidence(fallbackFailure.score, topFailureScore);
+        if (confidence >= MIN_FAILURE_WARNING_CONFIDENCE) {
+          const hint = retrievalHintFromText(
+            fallbackFailure.document.text,
+            "failure_warning",
+          );
+          suggestions.push({
+            id: `retrieval-failure-warning-${fallbackFailure.document.id}`,
+            title: "Prior failure warning",
+            rationale: hint.rationale,
+            confidence: Math.min(0.7, Math.max(0.2, confidence)),
+            evidenceEventIds: [fallbackFailure.document.sourceEventId],
+            playbookMarkdown: `- Action: ${hint.action}\n- Confirm the root cause has changed before retrying.`,
+          });
+        }
       }
     }
 

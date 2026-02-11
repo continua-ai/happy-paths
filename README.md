@@ -192,6 +192,8 @@ Defaults / env vars:
 - Override trace root: `HAPPY_PATHS_TRACE_ROOT=...`
 - Set scope: `HAPPY_PATHS_TRACE_SCOPE=personal|team|public` (default: `personal`)
 - Tune hints: `HAPPY_PATHS_MAX_SUGGESTIONS=3`
+- Hint retrieval prefers non-error tool results before falling back to broader
+  tool-result history.
 - Override extension session id (for benchmark pairing):
   `HAPPY_PATHS_SESSION_ID=swebench::<instance_id>::<off|on>::<replicate>`
 
