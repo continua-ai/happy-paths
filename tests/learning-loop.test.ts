@@ -249,4 +249,125 @@ describe("LearningLoop", () => {
     expect(suggestions[0]?.rationale).toContain("hit an error");
     expect(suggestions[0]?.playbookMarkdown).toContain("Confirm the root cause");
   });
+
+  it("suppresses mined artifacts when retrieval hints already exist", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([
+        {
+          document: {
+            id: "doc-success",
+            sourceEventId: "event-success",
+            text: 'tool_result pi {"command":"pytest tests/targeted_test.py","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 5,
+        },
+      ]),
+      miner: new SimpleWrongTurnMiner(),
+    });
+
+    await loop.ingest({
+      id: "evt-failure",
+      timestamp: new Date().toISOString(),
+      sessionId: "session-artifact",
+      harness: "pi",
+      scope: "public",
+      type: "tool_result",
+      payload: {
+        command: "pytest tests/full_suite.py",
+        isError: true,
+        text: "failed",
+      },
+      metrics: {
+        outcome: "failure",
+      },
+    });
+
+    await loop.ingest({
+      id: "evt-success",
+      timestamp: new Date().toISOString(),
+      sessionId: "session-artifact",
+      harness: "pi",
+      scope: "public",
+      type: "tool_result",
+      payload: {
+        command: "pytest tests/full_suite.py -k failing_case --maxfail=1",
+        isError: false,
+        text: "passed",
+      },
+      metrics: {
+        outcome: "success",
+      },
+    });
+
+    const suggestions = await loop.suggest({ text: "targeted run" });
+
+    expect(suggestions.length).toBeGreaterThan(0);
+    expect(
+      suggestions.some(
+        (suggestion) => suggestion.title === "Learned wrong-turn correction",
+      ),
+    ).toBe(false);
+  });
+
+  it("uses mined artifacts when retrieval yields no suggestions", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([]),
+      miner: new SimpleWrongTurnMiner(),
+    });
+
+    await loop.ingest({
+      id: "evt-failure-no-retrieval",
+      timestamp: new Date().toISOString(),
+      sessionId: "session-artifact-only",
+      harness: "pi",
+      scope: "public",
+      type: "tool_result",
+      payload: {
+        command: "pytest tests/full_suite.py",
+        isError: true,
+        text: "failed",
+      },
+      metrics: {
+        outcome: "failure",
+      },
+    });
+
+    await loop.ingest({
+      id: "evt-success-no-retrieval",
+      timestamp: new Date().toISOString(),
+      sessionId: "session-artifact-only",
+      harness: "pi",
+      scope: "public",
+      type: "tool_result",
+      payload: {
+        command: "pytest tests/full_suite.py -k failing_case --maxfail=1",
+        isError: false,
+        text: "passed",
+      },
+      metrics: {
+        outcome: "success",
+      },
+    });
+
+    const suggestions = await loop.suggest({ text: "targeted run" });
+
+    expect(
+      suggestions.some(
+        (suggestion) => suggestion.title === "Learned wrong-turn correction",
+      ),
+    ).toBe(true);
+  });
 });

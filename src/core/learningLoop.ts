@@ -405,16 +405,18 @@ export class LearningLoop {
       }
     }
 
-    const mined = await this.mine(5);
-    for (const artifact of mined) {
-      suggestions.push({
-        id: `artifact-${artifact.id}`,
-        title: "Learned wrong-turn correction",
-        rationale: artifact.summary,
-        confidence: artifact.confidence,
-        evidenceEventIds: artifact.evidenceEventIds,
-        playbookMarkdown: `- Pattern: ${artifact.summary}\n- Confidence: ${(artifact.confidence * 100).toFixed(0)}%`,
-      });
+    if (suggestions.length === 0) {
+      const mined = await this.mine(5);
+      for (const artifact of mined) {
+        suggestions.push({
+          id: `artifact-${artifact.id}`,
+          title: "Learned wrong-turn correction",
+          rationale: artifact.summary,
+          confidence: artifact.confidence,
+          evidenceEventIds: artifact.evidenceEventIds,
+          playbookMarkdown: `- Pattern: ${artifact.summary}\n- Confidence: ${(artifact.confidence * 100).toFixed(0)}%`,
+        });
+      }
     }
 
     const dedupedSuggestions: LearningSuggestion[] = [];

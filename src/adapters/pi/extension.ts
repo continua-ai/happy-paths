@@ -331,6 +331,9 @@ export function createPiTraceExtension(
             retrievalOutcomeFilter: "disabled",
             fallbackToGlobalToolResults: false,
             hintCount: 0,
+            retrievalHintCount: 0,
+            failureWarningHintCount: 0,
+            artifactHintCount: 0,
             selfFilteredHintCount: 0,
             hintIds: [],
             hintTitles: [],
@@ -382,6 +385,16 @@ export function createPiTraceExtension(
       });
 
       const topSuggestions = rankedSuggestions.slice(0, maxSuggestions);
+      const retrievalHintCount = topSuggestions.filter((suggestion) => {
+        return suggestion.id.startsWith("retrieval-");
+      }).length;
+      const failureWarningHintCount = topSuggestions.filter((suggestion) => {
+        return suggestion.title === "Prior failure warning";
+      }).length;
+      const artifactHintCount = topSuggestions.filter((suggestion) => {
+        return suggestion.id.startsWith("artifact-");
+      }).length;
+
       await ingest({
         type: "checkpoint",
         payload: {
@@ -390,6 +403,9 @@ export function createPiTraceExtension(
           retrievalOutcomeFilter: selectedPlan.outcomeFilter,
           fallbackToGlobalToolResults,
           hintCount: topSuggestions.length,
+          retrievalHintCount,
+          failureWarningHintCount,
+          artifactHintCount,
           selfFilteredHintCount: Math.max(
             0,
             suggestions.length - nonSelfSuggestions.length,

@@ -116,8 +116,9 @@ Outputs:
 - `qualityFlags` (including sparse long-horizon pairability flags)
 
 The trace stream also includes `checkpoint` events (`kind=happy_paths_prior_hints`)
-so you can inspect hint counts, retrieval scope, outcome filter mode
-(`non_error` vs `any`), and fallback behavior per run.
+so you can inspect hint counts (including retrieval vs artifact hints),
+retrieval scope, outcome filter mode (`non_error` vs `any`), and fallback
+behavior per run.
 
 ## Artifact publication policy (repo vs GCS)
 

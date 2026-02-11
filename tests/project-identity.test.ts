@@ -211,6 +211,8 @@ describe("project identity", () => {
       .find((event) => event.type === "checkpoint");
 
     expect(checkpoint?.payload?.retrievalOutcomeFilter).toBe("non_error");
+    expect(checkpoint?.payload?.retrievalHintCount).toBeGreaterThan(0);
+    expect(checkpoint?.payload?.artifactHintCount).toBe(0);
     expect(checkpoint?.payload?.fallbackToGlobalToolResults).toBe(false);
   });
 
@@ -254,6 +256,8 @@ describe("project identity", () => {
       .find((event) => event.type === "checkpoint");
 
     expect(checkpoint?.payload?.hintCount).toBe(0);
+    expect(checkpoint?.payload?.retrievalHintCount).toBe(0);
+    expect(checkpoint?.payload?.artifactHintCount).toBe(0);
     expect(checkpoint?.payload?.retrievalOutcomeFilter).toBe("any");
     expect(Number(checkpoint?.payload?.selfFilteredHintCount ?? 0)).toBe(0);
   });
