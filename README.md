@@ -198,6 +198,8 @@ Defaults / env vars:
   evidence-grounded hints.
 - Broad/low-signal commands are deprioritized in retrieval hints; they only
   appear as explicit low-signal fallback hints when no better evidence exists.
+- If both low-signal history and prior failure evidence are present, failure
+  warnings are prioritized over low-signal action hints.
 - Override extension session id (for benchmark pairing):
   `HAPPY_PATHS_SESSION_ID=swebench::<instance_id>::<off|on>::<replicate>`
 

@@ -152,6 +152,7 @@ function isLowSignalCommand(command: string): boolean {
     /\s--maxfail(?:=|\s)\d+/,
     /\s--filter\s+\S+/,
     /\s--grep\s+\S+/,
+    /\s--\s+--\S+/,
     /\//,
     /::/,
   ];
@@ -454,27 +455,6 @@ export class LearningLoop {
       }
     }
 
-    if (suggestions.length === 0 && deprioritizedCandidates.length > 0) {
-      deprioritizedCandidates.sort((left, right) => {
-        if (right.confidence !== left.confidence) {
-          return right.confidence - left.confidence;
-        }
-        return left.hit.document.id.localeCompare(right.hit.document.id);
-      });
-
-      const fallback = deprioritizedCandidates[0];
-      if (fallback) {
-        suggestions.push({
-          id: `retrieval-low-signal-${fallback.hit.document.id}`,
-          title: "Low-signal prior tool result",
-          rationale: fallback.hint.rationale,
-          confidence: Math.max(0.15, fallback.confidence),
-          evidenceEventIds: [fallback.hit.document.sourceEventId],
-          playbookMarkdown: `- Action: ${fallback.hint.action}\n- This prior command looked low-signal; prefer a narrower validation command when possible.`,
-        });
-      }
-    }
-
     if (suggestions.length === 0 && failureRetrieval.length > 0) {
       const fallbackFailure = failureRetrieval[0];
       const topFailureScore = failureRetrieval[0]?.score ?? 0;
@@ -494,6 +474,27 @@ export class LearningLoop {
             playbookMarkdown: `- Action: ${hint.action}\n- Confirm the root cause has changed before retrying.`,
           });
         }
+      }
+    }
+
+    if (suggestions.length === 0 && deprioritizedCandidates.length > 0) {
+      deprioritizedCandidates.sort((left, right) => {
+        if (right.confidence !== left.confidence) {
+          return right.confidence - left.confidence;
+        }
+        return left.hit.document.id.localeCompare(right.hit.document.id);
+      });
+
+      const fallback = deprioritizedCandidates[0];
+      if (fallback) {
+        suggestions.push({
+          id: `retrieval-low-signal-${fallback.hit.document.id}`,
+          title: "Low-signal prior tool result",
+          rationale: fallback.hint.rationale,
+          confidence: Math.max(0.15, fallback.confidence),
+          evidenceEventIds: [fallback.hit.document.sourceEventId],
+          playbookMarkdown: `- Action: ${fallback.hint.action}\n- This prior command looked low-signal; prefer a narrower validation command when possible.`,
+        });
       }
     }
 

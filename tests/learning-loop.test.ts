@@ -323,6 +323,92 @@ describe("LearningLoop", () => {
     expect(suggestions[0]?.playbookMarkdown).toContain("low-signal");
   });
 
+  it("prefers failure warnings over low-signal fallbacks when both exist", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([
+        {
+          document: {
+            id: "doc-low-signal",
+            sourceEventId: "event-low-signal",
+            text: 'tool_result pi {"command":"pytest","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 8,
+        },
+        {
+          document: {
+            id: "doc-failure",
+            sourceEventId: "event-failure",
+            text: 'tool_result pi {"command":"pytest tests/full_suite.py","isError":true}',
+            metadata: {
+              eventType: "tool_result",
+              isError: true,
+              outcome: "failure",
+            },
+          },
+          score: 7,
+        },
+      ]),
+    });
+
+    const suggestions = await loop.suggest({ text: "test failure" });
+
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]?.title).toBe("Prior failure warning");
+    expect(suggestions[0]?.title).not.toBe("Low-signal prior tool result");
+  });
+
+  it("treats forwarded test args as high-signal retrieval hints", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([
+        {
+          document: {
+            id: "doc-forwarded-args",
+            sourceEventId: "event-forwarded-args",
+            text: 'tool_result pi {"command":"npm run test -- --runInBand","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 8,
+        },
+        {
+          document: {
+            id: "doc-failure",
+            sourceEventId: "event-failure",
+            text: 'tool_result pi {"command":"npm run test","isError":true}',
+            metadata: {
+              eventType: "tool_result",
+              isError: true,
+              outcome: "failure",
+            },
+          },
+          score: 7,
+        },
+      ]),
+    });
+
+    const suggestions = await loop.suggest({ text: "cannot find module" });
+
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]?.title).toBe("Related prior tool result");
+    expect(suggestions[0]?.rationale).toContain("runInBand");
+  });
+
   it("suppresses mined artifacts when retrieval hints already exist", async () => {
     const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
     tempDirs.push(dir);

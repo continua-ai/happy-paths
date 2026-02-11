@@ -119,7 +119,8 @@ The trace stream also includes `checkpoint` events (`kind=happy_paths_prior_hint
 so you can inspect hint counts (including retrieval vs artifact hints),
 retrieval scope, outcome filter mode (`non_error` vs `any`), and fallback
 behavior per run. Retrieval now also marks when only low-signal prior commands
-were available, which surfaces as a low-signal fallback hint.
+were available, which surfaces as a low-signal fallback hint. If failure
+signals are available at the same time, warning hints are preferred.
 
 ## Artifact publication policy (repo vs GCS)
 
