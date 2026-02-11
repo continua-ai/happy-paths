@@ -174,4 +174,79 @@ describe("LearningLoop", () => {
     expect(suggestions[0]?.rationale).toContain("Prior run used");
     expect(suggestions[0]?.playbookMarkdown).toContain("Action:");
   });
+
+  it("prefers non-error tool results over failure hits", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([
+        {
+          document: {
+            id: "doc-failure",
+            sourceEventId: "event-failure",
+            text: 'tool_result pi {"command":"pytest tests/failing_suite.py","isError":true}',
+            metadata: {
+              eventType: "tool_result",
+              isError: true,
+              outcome: "failure",
+            },
+          },
+          score: 9,
+        },
+        {
+          document: {
+            id: "doc-success",
+            sourceEventId: "event-success",
+            text: 'tool_result pi {"command":"pytest tests/targeted_test.py","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 3,
+        },
+      ]),
+    });
+
+    const suggestions = await loop.suggest({ text: "failing suite" });
+
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]?.title).toBe("Related prior tool result");
+    expect(suggestions[0]?.evidenceEventIds).toEqual(["event-success"]);
+    expect(suggestions[0]?.rationale).toContain("non-error tool result");
+  });
+
+  it("emits a cautionary warning when only failure evidence exists", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([
+        {
+          document: {
+            id: "doc-failure-only",
+            sourceEventId: "event-failure-only",
+            text: 'tool_result pi {"command":"pytest tests/failing_suite.py","isError":true}',
+            metadata: {
+              eventType: "tool_result",
+              isError: true,
+              outcome: "failure",
+            },
+          },
+          score: 4,
+        },
+      ]),
+    });
+
+    const suggestions = await loop.suggest({ text: "failing suite" });
+
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]?.title).toBe("Prior failure warning");
+    expect(suggestions[0]?.rationale).toContain("hit an error");
+    expect(suggestions[0]?.playbookMarkdown).toContain("Confirm the root cause");
+  });
 });

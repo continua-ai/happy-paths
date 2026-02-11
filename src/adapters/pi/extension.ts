@@ -20,6 +20,17 @@ interface ToolCallState {
   input: Record<string, unknown>;
 }
 
+type SuggestionRetrievalScope = "swebench_instance" | "global";
+
+type SuggestionRetrievalOutcomeFilter = "non_error" | "any";
+
+interface SuggestionRetrievalPlan {
+  filters: Record<string, string | boolean>;
+  retrievalScope: SuggestionRetrievalScope;
+  outcomeFilter: SuggestionRetrievalOutcomeFilter;
+  fallbackToGlobalToolResults: boolean;
+}
+
 export interface PiTraceExtensionOptions {
   loop: LearningLoop;
   scope?: TraceScope;
@@ -93,7 +104,79 @@ function firstPlaybookAction(playbookMarkdown: string): string | null {
   }
 
   const withoutPrefix = firstLine.startsWith("- ") ? firstLine.slice(2) : firstLine;
-  return withoutPrefix.trim() || null;
+  const withoutActionLabel = withoutPrefix.replace(/^Action:\s*/i, "");
+  return withoutActionLabel.trim() || null;
+}
+
+function buildSuggestionRetrievalPlans(
+  swebenchInstanceId: string | null,
+): SuggestionRetrievalPlan[] {
+  const plans: SuggestionRetrievalPlan[] = [];
+
+  if (swebenchInstanceId) {
+    plans.push({
+      filters: {
+        eventType: "tool_result",
+        swebenchInstanceId,
+        isError: false,
+      },
+      retrievalScope: "swebench_instance",
+      outcomeFilter: "non_error",
+      fallbackToGlobalToolResults: false,
+    });
+
+    plans.push({
+      filters: {
+        eventType: "tool_result",
+        swebenchInstanceId,
+      },
+      retrievalScope: "swebench_instance",
+      outcomeFilter: "any",
+      fallbackToGlobalToolResults: false,
+    });
+
+    plans.push({
+      filters: {
+        eventType: "tool_result",
+        isError: false,
+      },
+      retrievalScope: "global",
+      outcomeFilter: "non_error",
+      fallbackToGlobalToolResults: true,
+    });
+
+    plans.push({
+      filters: {
+        eventType: "tool_result",
+      },
+      retrievalScope: "global",
+      outcomeFilter: "any",
+      fallbackToGlobalToolResults: true,
+    });
+
+    return plans;
+  }
+
+  plans.push({
+    filters: {
+      eventType: "tool_result",
+      isError: false,
+    },
+    retrievalScope: "global",
+    outcomeFilter: "non_error",
+    fallbackToGlobalToolResults: false,
+  });
+
+  plans.push({
+    filters: {
+      eventType: "tool_result",
+    },
+    retrievalScope: "global",
+    outcomeFilter: "any",
+    fallbackToGlobalToolResults: false,
+  });
+
+  return plans;
 }
 
 export function createPiTraceExtension(
@@ -245,6 +328,7 @@ export function createPiTraceExtension(
           payload: {
             kind: "happy_paths_prior_hints",
             retrievalScope: "disabled",
+            retrievalOutcomeFilter: "disabled",
             fallbackToGlobalToolResults: false,
             hintCount: 0,
             selfFilteredHintCount: 0,
@@ -257,30 +341,31 @@ export function createPiTraceExtension(
       }
 
       const swebenchInstanceId = swebenchInstanceIdFromSessionId(sessionId);
-      const scopedFilters: Record<string, string> = {
-        eventType: "tool_result",
+      const retrievalPlans = buildSuggestionRetrievalPlans(swebenchInstanceId);
+
+      let selectedPlan = retrievalPlans[0] ?? {
+        filters: { eventType: "tool_result", isError: false },
+        retrievalScope: "global" as const,
+        outcomeFilter: "non_error" as const,
+        fallbackToGlobalToolResults: false,
       };
-      if (swebenchInstanceId) {
-        scopedFilters.swebenchInstanceId = swebenchInstanceId;
-      }
+      let suggestions = [] as Awaited<ReturnType<typeof loop.suggest>>;
 
-      let fallbackToGlobalToolResults = false;
-      let suggestions = await loop.suggest({
-        text: event.prompt,
-        limit: maxSuggestions + 2,
-        filters: scopedFilters,
-      });
-
-      if (suggestions.length === 0 && swebenchInstanceId) {
-        fallbackToGlobalToolResults = true;
-        suggestions = await loop.suggest({
+      for (const plan of retrievalPlans) {
+        const candidate = await loop.suggest({
           text: event.prompt,
           limit: maxSuggestions + 2,
-          filters: {
-            eventType: "tool_result",
-          },
+          filters: plan.filters,
         });
+
+        selectedPlan = plan;
+        if (candidate.length > 0) {
+          suggestions = candidate;
+          break;
+        }
       }
+
+      const fallbackToGlobalToolResults = selectedPlan.fallbackToGlobalToolResults;
 
       const nonSelfSuggestions = suggestions.filter((suggestion) => {
         if (!latestUserInputEventId) {
@@ -301,7 +386,8 @@ export function createPiTraceExtension(
         type: "checkpoint",
         payload: {
           kind: "happy_paths_prior_hints",
-          retrievalScope: swebenchInstanceId ? "swebench_instance" : "global",
+          retrievalScope: selectedPlan.retrievalScope,
+          retrievalOutcomeFilter: selectedPlan.outcomeFilter,
           fallbackToGlobalToolResults,
           hintCount: topSuggestions.length,
           selfFilteredHintCount: Math.max(

@@ -72,6 +72,22 @@ export class DefaultEventDocumentBuilder implements EventDocumentBuilder {
       sessionId: event.sessionId,
     };
 
+    if (event.metrics?.outcome) {
+      metadata.outcome = event.metrics.outcome;
+    }
+
+    if (event.type === "tool_result") {
+      if (typeof event.payload.toolName === "string") {
+        metadata.toolName = event.payload.toolName;
+      }
+      if (typeof event.payload.command === "string") {
+        metadata.command = event.payload.command;
+      }
+      if (typeof event.payload.isError === "boolean") {
+        metadata.isError = event.payload.isError;
+      }
+    }
+
     const swebenchIdentity = parseSweBenchSessionIdentity(event.sessionId);
     if (swebenchIdentity) {
       metadata.swebenchInstanceId = swebenchIdentity.instanceId;

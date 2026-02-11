@@ -136,6 +136,84 @@ describe("project identity", () => {
     expect(response?.message?.customType).toBe("future-project-name");
   });
 
+  it("prefers non-error hint retrieval mode before broad fallback", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "happy-paths-extension-hint-mode-"));
+    tempDirs.push(dataDir);
+
+    const loop = createLocalLearningLoop({ dataDir });
+    await loop.ingest({
+      id: "evt-failure",
+      timestamp: new Date().toISOString(),
+      sessionId: "seed-history",
+      harness: "pi",
+      scope: "public",
+      type: "tool_result",
+      payload: {
+        toolName: "bash",
+        command: "pytest tests/full_suite.py",
+        text: "Command failed",
+        isError: true,
+      },
+      metrics: {
+        outcome: "failure",
+      },
+    });
+    await loop.ingest({
+      id: "evt-success",
+      timestamp: new Date().toISOString(),
+      sessionId: "seed-history",
+      harness: "pi",
+      scope: "public",
+      type: "tool_result",
+      payload: {
+        toolName: "bash",
+        command: "pytest tests/full_suite.py -k failing_case --maxfail=1",
+        text: "Targeted run passed",
+        isError: false,
+      },
+      metrics: {
+        outcome: "success",
+      },
+    });
+
+    const fakePi = new FakePiApi();
+    const sessionId = "session-hint-mode";
+    createPiTraceExtension({
+      loop,
+      sessionId,
+      maxSuggestions: 3,
+    })(fakePi);
+
+    const response = (await fakePi.emit("before_agent_start", {
+      prompt: "pytest full_suite failing_case",
+      systemPrompt: "",
+    })) as
+      | {
+          message?: {
+            content?: string;
+          };
+        }
+      | undefined;
+
+    expect(response?.message?.content).toMatch(/--maxfail=(1|<num>)/);
+
+    const stored = await readFile(
+      join(dataDir, "sessions", `${sessionId}.jsonl`),
+      "utf-8",
+    );
+    const checkpoint = stored
+      .trim()
+      .split("\n")
+      .map(
+        (line) =>
+          JSON.parse(line) as { type?: string; payload?: Record<string, unknown> },
+      )
+      .find((event) => event.type === "checkpoint");
+
+    expect(checkpoint?.payload?.retrievalOutcomeFilter).toBe("non_error");
+    expect(checkpoint?.payload?.fallbackToGlobalToolResults).toBe(false);
+  });
+
   it("does not inject hints when only the current prompt has been ingested", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "happy-paths-extension-self-filter-"));
     tempDirs.push(dataDir);
@@ -176,6 +254,7 @@ describe("project identity", () => {
       .find((event) => event.type === "checkpoint");
 
     expect(checkpoint?.payload?.hintCount).toBe(0);
+    expect(checkpoint?.payload?.retrievalOutcomeFilter).toBe("any");
     expect(Number(checkpoint?.payload?.selfFilteredHintCount ?? 0)).toBe(0);
   });
 });
