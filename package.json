@@ -45,6 +45,7 @@
     "benchmark:swebench-lite:fetch": "tsx scripts/fetch-swebench-lite-slice.ts",
     "benchmark:swebench-lite:prompts": "tsx scripts/build-swebench-lite-prompts.ts",
     "benchmark:swebench-lite:pi": "tsx scripts/run-swebench-lite-pi.ts",
+    "benchmark:swebench-lite:canonicalize-traces": "tsx scripts/canonicalize-swebench-traces.ts",
     "benchmark:swebench-lite:lane": "tsx scripts/run-swebench-lite-lane.ts",
     "typecheck": "tsc --noEmit",
     "verify": "biome check . && tsc --noEmit && vitest run",

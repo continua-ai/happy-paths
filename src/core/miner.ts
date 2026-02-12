@@ -14,6 +14,14 @@ interface ToolOutcome {
   text: string;
 }
 
+interface ArtifactAccumulator {
+  failureSignature: string;
+  successSignature: string;
+  supportCount: number;
+  supportSessionIds: Set<string>;
+  evidenceEventIds: string[];
+}
+
 const LOOKAHEAD_RESULTS = 6;
 
 function payloadText(payload: Record<string, unknown>): string {
@@ -68,10 +76,9 @@ export class SimpleWrongTurnMiner implements TraceMiner {
   }
 
   async mine(limit = 50): Promise<MinedArtifact[]> {
-    const artifacts: MinedArtifact[] = [];
-    const seen = new Set<string>();
+    const byFingerprint = new Map<string, ArtifactAccumulator>();
 
-    for (const events of this.eventsBySession.values()) {
+    for (const [sessionId, events] of this.eventsBySession.entries()) {
       const toolResults = events
         .map((event) => toToolOutcome(event))
         .filter((event): event is ToolOutcome => event !== null);
@@ -107,32 +114,93 @@ export class SimpleWrongTurnMiner implements TraceMiner {
           }
 
           const fingerprint = `${failureSignature}=>${successSignature}`;
-          if (seen.has(fingerprint)) {
-            continue;
-          }
+          const existing = byFingerprint.get(fingerprint);
+          if (existing) {
+            existing.supportCount += 1;
+            existing.supportSessionIds.add(sessionId);
 
-          seen.add(fingerprint);
-          artifacts.push({
-            id: `artifact-${current.event.id}-${candidate.event.id}`,
-            kind: "wrong_turn_fix",
-            summary: `When you hit "${failureSignature}", prefer "${successSignature}".`,
-            confidence: 0.6,
-            evidenceEventIds: [current.event.id, candidate.event.id],
-            metadata: {
+            for (const eventId of [current.event.id, candidate.event.id]) {
+              if (existing.evidenceEventIds.includes(eventId)) {
+                continue;
+              }
+              existing.evidenceEventIds.push(eventId);
+              if (existing.evidenceEventIds.length >= 8) {
+                break;
+              }
+            }
+          } else {
+            byFingerprint.set(fingerprint, {
               failureSignature,
               successSignature,
-            },
-          });
-
-          if (artifacts.length >= limit) {
-            return artifacts;
+              supportCount: 1,
+              supportSessionIds: new Set([sessionId]),
+              evidenceEventIds: [current.event.id, candidate.event.id],
+            });
           }
+
           break;
         }
       }
     }
 
-    return artifacts;
+    const artifacts = [...byFingerprint.values()]
+      .map((entry) => {
+        const supportSessionCount = entry.supportSessionIds.size;
+        const supportCountWeight = Math.min(1, (entry.supportCount - 1) / 4);
+        const supportSessionWeight = Math.min(1, (supportSessionCount - 1) / 2);
+        const confidence = Math.min(
+          0.9,
+          0.45 + supportCountWeight * 0.2 + supportSessionWeight * 0.25,
+        );
+
+        return {
+          id: `artifact-${entry.failureSignature}-${entry.successSignature}`,
+          kind: "wrong_turn_fix" as const,
+          summary: `When you hit "${entry.failureSignature}", prefer "${entry.successSignature}".`,
+          confidence,
+          evidenceEventIds: entry.evidenceEventIds,
+          metadata: {
+            failureSignature: entry.failureSignature,
+            successSignature: entry.successSignature,
+            supportCount: entry.supportCount,
+            supportSessionCount,
+            crossSessionSupport: supportSessionCount >= 2,
+          },
+        } satisfies MinedArtifact;
+      })
+      .sort((left, right) => {
+        const leftSessionSupport =
+          typeof left.metadata?.supportSessionCount === "number"
+            ? left.metadata.supportSessionCount
+            : 0;
+        const rightSessionSupport =
+          typeof right.metadata?.supportSessionCount === "number"
+            ? right.metadata.supportSessionCount
+            : 0;
+        if (rightSessionSupport !== leftSessionSupport) {
+          return rightSessionSupport - leftSessionSupport;
+        }
+
+        const leftSupport =
+          typeof left.metadata?.supportCount === "number"
+            ? left.metadata.supportCount
+            : 0;
+        const rightSupport =
+          typeof right.metadata?.supportCount === "number"
+            ? right.metadata.supportCount
+            : 0;
+        if (rightSupport !== leftSupport) {
+          return rightSupport - leftSupport;
+        }
+
+        if (right.confidence !== left.confidence) {
+          return right.confidence - left.confidence;
+        }
+
+        return left.id.localeCompare(right.id);
+      });
+
+    return artifacts.slice(0, limit);
   }
 
   private failureSignature(outcome: ToolOutcome): string {

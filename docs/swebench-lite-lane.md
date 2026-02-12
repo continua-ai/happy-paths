@@ -43,14 +43,15 @@ trace JSONL into a dedicated trace root.
 ```bash
 npm run benchmark:swebench-lite:pi -- \
   --tasks .happy-paths/benchmarks/swebench_lite_50/tasks.json \
-  --count 3 \
-  --replicates 1 \
+  --offset 6 \
+  --count 20 \
+  --replicates 3 \
   --trace-root .happy-paths/benchmarks/swebench_lite_50/traces \
   --workspace-root .happy-paths/benchmarks/swebench_lite_50/workspaces \
   --out-dir .happy-paths/benchmarks/swebench_lite_50/pi_runs \
   --session-id-prefix swebench \
   --trace-state-mode isolated \
-  --timeout-seconds 600 \
+  --timeout-seconds 180 \
   --provider openai \
   --model codex-mini-latest
 ```
@@ -68,7 +69,11 @@ This helper:
   scored outputs),
 - runs Pi twice per replicate (`off`, then `on`),
 - captures logs/prompts under `pi_runs/logs/`,
-- writes extension traces under `trace-root`.
+- writes extension traces under `trace-root`,
+- enforces a minimum timeout of 120s per task-side run (default 180s).
+
+For stable comparisons, use a fixed-slice protocol (same offset/count/tasks,
+same model/provider, same timeout) and multiple replicates (recommended `r=3`).
 
 To preserve trajectory-level causality for OFF vs ON comparisons, use a strict
 session ID format:
@@ -91,6 +96,18 @@ Keep this corpus isolated under one trace root, e.g.
 `.happy-paths/benchmarks/swebench_lite_50/traces`.
 
 ## 4) Score the trace corpus with long-horizon gates
+
+Optional (explicit) canonicalization pass:
+
+```bash
+npm run benchmark:swebench-lite:canonicalize-traces -- \
+  --trace-root .happy-paths/benchmarks/swebench_lite_50/traces \
+  --out-root .happy-paths/benchmarks/swebench_lite_50/traces_clean \
+  --session-id-prefix swebench
+```
+
+Lane scoring now canonicalizes traces by default before running measured lanes.
+Use `--no-canonicalize-traces` only for debugging.
 
 ```bash
 npm run benchmark:swebench-lite:lane -- \
@@ -154,5 +171,8 @@ Practical rule of thumb:
   especially when long-horizon holdout pair counts are sparse.
 - Use long-horizon observed/trajectory lanes as secondary diagnostics until
   pairability is sufficiently powered.
+- Benchmark-agnostic policy: do **not** tune retrieval/hint behavior on specific
+  SWE-bench instances. Keep policy changes global, then re-measure on the fixed
+  protocol slice.
 - Use this as benchmark evidence generation, not as a substitute for correctness
   validation of patch outputs.

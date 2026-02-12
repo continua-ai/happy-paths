@@ -250,6 +250,49 @@ describe("LearningLoop", () => {
     expect(suggestions[0]?.playbookMarkdown).toContain("Confirm the root cause");
   });
 
+  it("adds failure warnings when command/env mismatch signals are present", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([
+        {
+          document: {
+            id: "doc-success",
+            sourceEventId: "event-success",
+            text: 'tool_result pi {"command":"pytest tests/unit/test_models.py -k login","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 9,
+        },
+        {
+          document: {
+            id: "doc-mismatch-failure",
+            sourceEventId: "event-mismatch-failure",
+            text: 'tool_result pi {"command":"pytest tests/unit/test_models.py","text":"ModuleNotFoundError: No module named project.settings","isError":true}',
+            metadata: {
+              eventType: "tool_result",
+              isError: true,
+              outcome: "failure",
+            },
+          },
+          score: 8,
+        },
+      ]),
+    });
+
+    const suggestions = await loop.suggest({ text: "module not found" });
+
+    expect(suggestions.length).toBeGreaterThan(0);
+    expect(suggestions[0]?.title).toBe("Prior failure warning");
+    expect(suggestions[0]?.rationale).toContain("mismatch patterns");
+  });
+
   it("deprioritizes low-signal commands when better retrieval hints exist", async () => {
     const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
     tempDirs.push(dir);
@@ -488,9 +531,9 @@ describe("LearningLoop", () => {
     });
 
     await loop.ingest({
-      id: "evt-failure-no-retrieval",
+      id: "evt-failure-no-retrieval-a",
       timestamp: new Date().toISOString(),
-      sessionId: "session-artifact-only",
+      sessionId: "session-artifact-only-a",
       harness: "pi",
       scope: "public",
       type: "tool_result",
@@ -505,9 +548,96 @@ describe("LearningLoop", () => {
     });
 
     await loop.ingest({
-      id: "evt-success-no-retrieval",
+      id: "evt-success-no-retrieval-a",
       timestamp: new Date().toISOString(),
-      sessionId: "session-artifact-only",
+      sessionId: "session-artifact-only-a",
+      harness: "pi",
+      scope: "public",
+      type: "tool_result",
+      payload: {
+        command: "pytest tests/full_suite.py -k failing_case --maxfail=1",
+        isError: false,
+        text: "passed",
+      },
+      metrics: {
+        outcome: "success",
+      },
+    });
+
+    await loop.ingest({
+      id: "evt-failure-no-retrieval-b",
+      timestamp: new Date().toISOString(),
+      sessionId: "session-artifact-only-b",
+      harness: "pi",
+      scope: "public",
+      type: "tool_result",
+      payload: {
+        command: "pytest tests/full_suite.py",
+        isError: true,
+        text: "failed again",
+      },
+      metrics: {
+        outcome: "failure",
+      },
+    });
+
+    await loop.ingest({
+      id: "evt-success-no-retrieval-b",
+      timestamp: new Date().toISOString(),
+      sessionId: "session-artifact-only-b",
+      harness: "pi",
+      scope: "public",
+      type: "tool_result",
+      payload: {
+        command: "pytest tests/full_suite.py -k failing_case --maxfail=1",
+        isError: false,
+        text: "passed again",
+      },
+      metrics: {
+        outcome: "success",
+      },
+    });
+
+    const suggestions = await loop.suggest({ text: "targeted run" });
+
+    expect(
+      suggestions.some(
+        (suggestion) => suggestion.title === "Learned wrong-turn correction",
+      ),
+    ).toBe(true);
+  });
+
+  it("falls back to verify-first guidance when artifact support is weak", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([]),
+      miner: new SimpleWrongTurnMiner(),
+    });
+
+    await loop.ingest({
+      id: "evt-failure-weak-artifact",
+      timestamp: new Date().toISOString(),
+      sessionId: "session-weak-artifact",
+      harness: "pi",
+      scope: "public",
+      type: "tool_result",
+      payload: {
+        command: "pytest tests/full_suite.py",
+        isError: true,
+        text: "failed",
+      },
+      metrics: {
+        outcome: "failure",
+      },
+    });
+
+    await loop.ingest({
+      id: "evt-success-weak-artifact",
+      timestamp: new Date().toISOString(),
+      sessionId: "session-weak-artifact",
       harness: "pi",
       scope: "public",
       type: "tool_result",
@@ -523,10 +653,8 @@ describe("LearningLoop", () => {
 
     const suggestions = await loop.suggest({ text: "targeted run" });
 
-    expect(
-      suggestions.some(
-        (suggestion) => suggestion.title === "Learned wrong-turn correction",
-      ),
-    ).toBe(true);
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]?.title).toBe("Verify-first fallback");
+    expect(suggestions[0]?.playbookMarkdown).toContain("focused verification");
   });
 });

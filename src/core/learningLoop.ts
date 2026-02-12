@@ -33,8 +33,13 @@ export interface BootstrapFromStoreOptions {
 }
 
 const RETRIEVAL_SUGGESTION_LIMIT = 5;
+const MAX_MINED_ARTIFACT_SUGGESTIONS = 1;
 const MIN_RETRIEVAL_CONFIDENCE = 0.2;
 const MIN_FAILURE_WARNING_CONFIDENCE = 0.2;
+const MIN_MISMATCH_WARNING_CONFIDENCE = 0.12;
+const MIN_ARTIFACT_SUPPORT_COUNT = 2;
+const MIN_ARTIFACT_SUPPORT_SESSION_COUNT = 2;
+const WEAK_RETRIEVAL_CONFIDENCE_THRESHOLD = 0.45;
 
 function clipForHint(text: string, maxLength = 180): string {
   if (text.length <= maxLength) {
@@ -52,6 +57,7 @@ interface RetrievalHint {
   action: string;
   actionKey: string;
   confidenceScale: number;
+  command: string | null;
 }
 
 function decodeEscapedWhitespace(text: string): string {
@@ -199,6 +205,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
         action: `Avoid retrying \`${clippedCommand}\` unchanged; verify the root cause has changed first.`,
         actionKey: `failure-command:${command.toLowerCase()}`,
         confidenceScale: 1,
+        command,
       };
     }
 
@@ -207,6 +214,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
       action: `Try \`${clippedCommand}\` and validate the result before proceeding.`,
       actionKey: `command:${command.toLowerCase()}`,
       confidenceScale: commandConfidenceScale(command),
+      command,
     };
   }
 
@@ -219,6 +227,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
           "Before retrying, confirm the underlying condition changed and run a narrower diagnostic first.",
         actionKey: `failure-payload:${payloadText.slice(0, 60).toLowerCase()}`,
         confidenceScale: 1,
+        command: null,
       };
     }
 
@@ -228,6 +237,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
         "Re-run a focused check around this symptom and verify with a targeted test.",
       actionKey: `payload:${payloadText.slice(0, 60).toLowerCase()}`,
       confidenceScale: 1,
+      command: null,
     };
   }
 
@@ -239,6 +249,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
         "Treat this as a warning and verify assumptions before repeating the same approach.",
       actionKey: `failure-text:${normalized.slice(0, 60).toLowerCase()}`,
       confidenceScale: 1,
+      command: null,
     };
   }
 
@@ -247,6 +258,7 @@ function retrievalHintFromText(text: string, kind: RetrievalHintKind): Retrieval
     action: "Use this as context, then validate with a concrete command/test.",
     actionKey: `text:${normalized.slice(0, 60).toLowerCase()}`,
     confidenceScale: 1,
+    command: null,
   };
 }
 
@@ -257,6 +269,97 @@ function retrievalConfidence(score: number, topScore: number): number {
 
   const normalized = score / topScore;
   return Math.max(0, Math.min(0.95, normalized));
+}
+
+const COMMAND_ENV_MISMATCH_PATTERNS: RegExp[] = [
+  /command not found/i,
+  /not recognized as an internal or external command/i,
+  /no such file or directory/i,
+  /file not found/i,
+  /cannot find module/i,
+  /no module named/i,
+  /module not found/i,
+  /modulenotfounderror/i,
+  /importerror/i,
+  /unknown option/i,
+  /unknown argument/i,
+  /unrecognized argument/i,
+  /missing required argument/i,
+  /permission denied/i,
+  /executable file not found/i,
+  /no matches found/i,
+  /could not locate/i,
+];
+
+function verifyFirstAction(command: string | null): string {
+  const clippedCommand = command ? clipForHint(command, 90) : null;
+  if (clippedCommand) {
+    return `Run a focused verification around \`${clippedCommand}\` first (command/env/context), then apply changes only after it confirms the hypothesis.`;
+  }
+
+  return "Run a focused verification first (command/env/context), then apply changes only after the check confirms the hypothesis.";
+}
+
+function actionForRetrievalHint(hint: RetrievalHint, confidence: number): string {
+  if (confidence < WEAK_RETRIEVAL_CONFIDENCE_THRESHOLD) {
+    return verifyFirstAction(hint.command);
+  }
+
+  return hint.action;
+}
+
+function isCommandOrEnvironmentMismatchSignal(hit: SearchResult): boolean {
+  const command = commandFromDocumentText(hit.document.text) ?? "";
+  const payloadText = payloadTextFromDocumentText(hit.document.text) ?? "";
+  const combined = `${command}\n${payloadText}\n${hit.document.text}`;
+
+  return COMMAND_ENV_MISMATCH_PATTERNS.some((pattern) => pattern.test(combined));
+}
+
+function artifactMetadataNumber(artifact: MinedArtifact, key: string): number {
+  const value = artifact.metadata?.[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, value);
+}
+
+function artifactSupportCount(artifact: MinedArtifact): number {
+  const metadataCount = artifactMetadataNumber(artifact, "supportCount");
+  if (metadataCount > 0) {
+    return metadataCount;
+  }
+
+  return Math.max(1, Math.floor(artifact.evidenceEventIds.length / 2));
+}
+
+function artifactSupportSessionCount(artifact: MinedArtifact): number {
+  const metadataCount = artifactMetadataNumber(artifact, "supportSessionCount");
+  if (metadataCount > 0) {
+    return metadataCount;
+  }
+
+  return 1;
+}
+
+function artifactSupportWeight(artifact: MinedArtifact): number {
+  const countSupport = artifactSupportCount(artifact);
+  const sessionSupport = artifactSupportSessionCount(artifact);
+
+  const countWeight = Math.min(1, (countSupport - 1) / 4);
+  const sessionWeight = Math.min(1, (sessionSupport - 1) / 2);
+  return Math.max(0, Math.min(1, (countWeight + sessionWeight) / 2));
+}
+
+function hasStrongArtifactSupport(artifact: MinedArtifact): boolean {
+  const countSupport = artifactSupportCount(artifact);
+  const sessionSupport = artifactSupportSessionCount(artifact);
+
+  if (sessionSupport >= MIN_ARTIFACT_SUPPORT_SESSION_COUNT) {
+    return true;
+  }
+
+  return countSupport >= Math.max(3, MIN_ARTIFACT_SUPPORT_COUNT + 1);
 }
 
 export class LearningLoop {
@@ -410,6 +513,7 @@ export class LearningLoop {
     });
 
     const topNonFailureScore = nonFailureRetrieval[0]?.score ?? 0;
+    const topFailureScore = failureRetrieval[0]?.score ?? 0;
     const seenActionKeys = new Set<string>();
     const deprioritizedCandidates: Array<{
       hit: SearchResult;
@@ -447,7 +551,10 @@ export class LearningLoop {
         rationale: hint.rationale,
         confidence,
         evidenceEventIds: [hit.document.sourceEventId],
-        playbookMarkdown: `- Action: ${hint.action}\n- Validate with targeted tests/checks before applying.`,
+        playbookMarkdown: `- Action: ${actionForRetrievalHint(
+          hint,
+          confidence,
+        )}\n- Validate with targeted checks before applying broad changes.`,
       });
 
       if (suggestions.length >= RETRIEVAL_SUGGESTION_LIMIT) {
@@ -455,9 +562,40 @@ export class LearningLoop {
       }
     }
 
+    const mismatchFailureCandidate = failureRetrieval.find((hit) => {
+      const confidence = retrievalConfidence(hit.score, topFailureScore);
+      return (
+        confidence >= MIN_MISMATCH_WARNING_CONFIDENCE &&
+        isCommandOrEnvironmentMismatchSignal(hit)
+      );
+    });
+
+    if (mismatchFailureCandidate) {
+      const hint = retrievalHintFromText(
+        mismatchFailureCandidate.document.text,
+        "failure_warning",
+      );
+      if (!seenActionKeys.has(hint.actionKey)) {
+        seenActionKeys.add(hint.actionKey);
+        suggestions.unshift({
+          id: `retrieval-failure-warning-${mismatchFailureCandidate.document.id}`,
+          title: "Prior failure warning",
+          rationale: `${hint.rationale} Command/env mismatch patterns were seen in similar failures.`,
+          confidence: Math.min(
+            0.75,
+            Math.max(
+              0.25,
+              retrievalConfidence(mismatchFailureCandidate.score, topFailureScore),
+            ),
+          ),
+          evidenceEventIds: [mismatchFailureCandidate.document.sourceEventId],
+          playbookMarkdown: `- Action: ${verifyFirstAction(hint.command)}\n- Confirm the root cause has changed before retrying.`,
+        });
+      }
+    }
+
     if (suggestions.length === 0 && failureRetrieval.length > 0) {
       const fallbackFailure = failureRetrieval[0];
-      const topFailureScore = failureRetrieval[0]?.score ?? 0;
       if (fallbackFailure) {
         const confidence = retrievalConfidence(fallbackFailure.score, topFailureScore);
         if (confidence >= MIN_FAILURE_WARNING_CONFIDENCE) {
@@ -471,7 +609,7 @@ export class LearningLoop {
             rationale: hint.rationale,
             confidence: Math.min(0.7, Math.max(0.2, confidence)),
             evidenceEventIds: [fallbackFailure.document.sourceEventId],
-            playbookMarkdown: `- Action: ${hint.action}\n- Confirm the root cause has changed before retrying.`,
+            playbookMarkdown: `- Action: ${verifyFirstAction(hint.command)}\n- Confirm the root cause has changed before retrying.`,
           });
         }
       }
@@ -493,21 +631,74 @@ export class LearningLoop {
           rationale: fallback.hint.rationale,
           confidence: Math.max(0.15, fallback.confidence),
           evidenceEventIds: [fallback.hit.document.sourceEventId],
-          playbookMarkdown: `- Action: ${fallback.hint.action}\n- This prior command looked low-signal; prefer a narrower validation command when possible.`,
+          playbookMarkdown: `- Action: ${verifyFirstAction(
+            fallback.hint.command,
+          )}\n- This prior command looked low-signal; prefer narrow diagnostics over direct retries.`,
         });
       }
     }
 
     if (suggestions.length === 0) {
-      const mined = await this.mine(5);
-      for (const artifact of mined) {
+      const mined = await this.mine(10);
+      const candidateArtifacts = mined
+        .filter((artifact) => hasStrongArtifactSupport(artifact))
+        .map((artifact) => {
+          const supportCount = artifactSupportCount(artifact);
+          const supportSessionCount = artifactSupportSessionCount(artifact);
+          const weightedConfidence = Math.min(
+            0.9,
+            Math.max(
+              0.2,
+              artifact.confidence * (0.7 + artifactSupportWeight(artifact)),
+            ),
+          );
+
+          return {
+            artifact,
+            supportCount,
+            supportSessionCount,
+            weightedConfidence,
+          };
+        })
+        .sort((left, right) => {
+          if (right.supportSessionCount !== left.supportSessionCount) {
+            return right.supportSessionCount - left.supportSessionCount;
+          }
+          if (right.supportCount !== left.supportCount) {
+            return right.supportCount - left.supportCount;
+          }
+          if (right.weightedConfidence !== left.weightedConfidence) {
+            return right.weightedConfidence - left.weightedConfidence;
+          }
+          return left.artifact.id.localeCompare(right.artifact.id);
+        })
+        .slice(0, MAX_MINED_ARTIFACT_SUGGESTIONS);
+
+      for (const candidate of candidateArtifacts) {
         suggestions.push({
-          id: `artifact-${artifact.id}`,
+          id: `artifact-${candidate.artifact.id}`,
           title: "Learned wrong-turn correction",
-          rationale: artifact.summary,
-          confidence: artifact.confidence,
-          evidenceEventIds: artifact.evidenceEventIds,
-          playbookMarkdown: `- Pattern: ${artifact.summary}\n- Confidence: ${(artifact.confidence * 100).toFixed(0)}%`,
+          rationale: `${candidate.artifact.summary} (support: ${candidate.supportSessionCount} session(s), ${candidate.supportCount} occurrence(s)).`,
+          confidence: candidate.weightedConfidence,
+          evidenceEventIds: candidate.artifact.evidenceEventIds,
+          playbookMarkdown: `- Pattern: ${candidate.artifact.summary}\n- Support: ${candidate.supportSessionCount} session(s), ${candidate.supportCount} occurrence(s)\n- Action: ${verifyFirstAction(null)}`,
+        });
+      }
+
+      if (
+        suggestions.length === 0 &&
+        (dedupedRetrieval.length > 0 || mined.length > 0)
+      ) {
+        suggestions.push({
+          id: "retrieval-verify-first-fallback",
+          title: "Verify-first fallback",
+          rationale:
+            "Prior retrieval evidence was weak or low-support. Start with targeted diagnostics before applying broad corrective actions.",
+          confidence: 0.2,
+          evidenceEventIds: [],
+          playbookMarkdown: `- Action: ${verifyFirstAction(
+            null,
+          )}\n- Prefer narrow reproductions and environment checks first.`,
         });
       }
     }
@@ -515,7 +706,7 @@ export class LearningLoop {
     const dedupedSuggestions: LearningSuggestion[] = [];
     const seenEvidenceKeys = new Set<string>();
 
-    for (const suggestion of suggestions) {
+    for (const suggestion of suggestions.slice(0, RETRIEVAL_SUGGESTION_LIMIT)) {
       const evidenceKey = suggestion.evidenceEventIds.slice().sort().join("|");
       const key = `${suggestion.title}|${evidenceKey}`;
       if (seenEvidenceKeys.has(key)) {

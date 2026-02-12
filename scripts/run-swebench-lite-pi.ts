@@ -103,7 +103,7 @@ function parseArgs(argv: string[]): {
     replicates: 1,
     sessionIdPrefix: "swebench",
     onMaxSuggestions: 3,
-    timeoutSeconds: 300,
+    timeoutSeconds: 180,
     provider: null as string | null,
     model: null as string | null,
     thinking: null as string | null,
@@ -163,7 +163,7 @@ function parseArgs(argv: string[]): {
       continue;
     }
     if (token === "--timeout-seconds") {
-      options.timeoutSeconds = Math.max(30, parseIntArg(String(value), token));
+      options.timeoutSeconds = Math.max(120, parseIntArg(String(value), token));
       index += 1;
       continue;
     }
@@ -234,7 +234,33 @@ function runCommandCaptured(options: {
   stdout: string;
   stderr: string;
 } {
-  const result = spawnSync(options.command, options.args, {
+  const timeoutBin = process.env.HAPPY_PATHS_TIMEOUT_BIN ?? "timeout";
+  const timeoutArgs = [
+    "--signal=TERM",
+    "--kill-after=5s",
+    `${options.timeoutSeconds}s`,
+    options.command,
+    ...options.args,
+  ];
+
+  const wrapped = spawnSync(timeoutBin, timeoutArgs, {
+    cwd: options.cwd,
+    encoding: "utf-8",
+    maxBuffer: 20 * 1024 * 1024,
+    env: options.env ?? process.env,
+  });
+
+  if (!wrapped.error) {
+    const exitCode = wrapped.status ?? 1;
+    return {
+      exitCode,
+      timedOut: exitCode === 124,
+      stdout: wrapped.stdout ?? "",
+      stderr: wrapped.stderr ?? "",
+    };
+  }
+
+  const fallback = spawnSync(options.command, options.args, {
     cwd: options.cwd,
     encoding: "utf-8",
     maxBuffer: 20 * 1024 * 1024,
@@ -242,13 +268,13 @@ function runCommandCaptured(options: {
     env: options.env ?? process.env,
   });
 
-  const timedOut = result.signal === "SIGTERM";
+  const timedOut = fallback.signal === "SIGTERM";
 
   return {
-    exitCode: timedOut ? 124 : (result.status ?? 1),
+    exitCode: timedOut ? 124 : (fallback.status ?? 1),
     timedOut,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stdout: fallback.stdout ?? "",
+    stderr: fallback.stderr ?? "",
   };
 }
 
