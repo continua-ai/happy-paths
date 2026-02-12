@@ -52,5 +52,70 @@ describe("SimpleWrongTurnMiner", () => {
     const first = artifacts.at(0);
     expect(first?.kind).toBe("wrong_turn_fix");
     expect(first?.evidenceEventIds).toEqual(["fail-1", "success-1"]);
+    expect(first?.metadata?.supportCount).toBe(1);
+    expect(first?.metadata?.supportSessionCount).toBe(1);
+  });
+
+  it("tracks cross-session support and increases metadata support counts", async () => {
+    const miner = new SimpleWrongTurnMiner();
+
+    await miner.ingest(
+      event({
+        id: "fail-a",
+        sessionId: "session-a",
+        payload: {
+          command: "npm run test",
+          isError: true,
+          output: "FAIL: Cannot find module x",
+        },
+        metrics: { outcome: "failure" },
+      }),
+    );
+    await miner.ingest(
+      event({
+        id: "success-a",
+        sessionId: "session-a",
+        payload: {
+          command: "npm run test -- --runInBand",
+          isError: false,
+          output: "PASS",
+        },
+        metrics: { outcome: "success" },
+      }),
+    );
+
+    await miner.ingest(
+      event({
+        id: "fail-b",
+        sessionId: "session-b",
+        payload: {
+          command: "npm run test",
+          isError: true,
+          output: "FAIL: Cannot find module x",
+        },
+        metrics: { outcome: "failure" },
+      }),
+    );
+    await miner.ingest(
+      event({
+        id: "success-b",
+        sessionId: "session-b",
+        payload: {
+          command: "npm run test -- --runInBand",
+          isError: false,
+          output: "PASS",
+        },
+        metrics: { outcome: "success" },
+      }),
+    );
+
+    const artifacts = await miner.mine();
+    const first = artifacts.at(0);
+
+    expect(first).toBeDefined();
+    expect(first?.metadata?.supportCount).toBe(2);
+    expect(first?.metadata?.supportSessionCount).toBe(2);
+    expect(first?.metadata?.crossSessionSupport).toBe(true);
+    expect(first?.confidence ?? 0).toBeGreaterThan(0.45);
   });
 });

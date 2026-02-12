@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import type { Dirent } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, extname, resolve } from "node:path";
 
 import type { SweBenchLiteTaskPack } from "../src/benchmarks/swebenchLite.js";
@@ -108,6 +108,8 @@ function parseFloatArg(value: string, flag: string): number {
 function parseArgs(argv: string[]): {
   tasks: string;
   traceRoot: string;
+  canonicalizeTraces: boolean;
+  canonicalTraceRoot: string | null;
   format: "auto" | "trace" | "pi";
   toolName: string;
   minSessionDurationMs: number;
@@ -123,6 +125,8 @@ function parseArgs(argv: string[]): {
   const options = {
     tasks: ".happy-paths/benchmarks/swebench_lite_50/tasks.json",
     traceRoot: ".happy-paths/benchmarks/swebench_lite_50/traces",
+    canonicalizeTraces: true,
+    canonicalTraceRoot: null as string | null,
     format: "trace" as const,
     toolName: "bash",
     minSessionDurationMs: 1_000,
@@ -148,6 +152,15 @@ function parseArgs(argv: string[]): {
     if (token === "--trace-root") {
       options.traceRoot = String(value);
       index += 1;
+      continue;
+    }
+    if (token === "--canonical-trace-root") {
+      options.canonicalTraceRoot = String(value);
+      index += 1;
+      continue;
+    }
+    if (token === "--no-canonicalize-traces") {
+      options.canonicalizeTraces = false;
       continue;
     }
     if (token === "--format") {
@@ -391,6 +404,92 @@ async function loadSessions(traceRoot: string): Promise<{
   };
 }
 
+type CanonicalizeSweBenchTraceResult = {
+  sourceTraceRoot: string;
+  canonicalTraceRoot: string;
+  filesScanned: number;
+  swebenchEventsParsed: number;
+  skippedNonSwebenchSessionEvents: number;
+  duplicateEventsDiscarded: number;
+  canonicalSessionCount: number;
+};
+
+async function canonicalizeSweBenchTraceRoot(options: {
+  sourceTraceRoot: string;
+  canonicalTraceRoot: string;
+  sessionIdPrefix: string;
+}): Promise<CanonicalizeSweBenchTraceResult> {
+  const files = await collectJsonlFiles(options.sourceTraceRoot);
+  const eventsBySessionId = new Map<string, Map<string, TraceEvent>>();
+
+  let eventCount = 0;
+  let skippedNonSwebenchSessionEvents = 0;
+  let duplicateEventsDiscarded = 0;
+
+  for (const filePath of files) {
+    const records = parseJsonlRecords(await readFile(filePath, "utf-8"));
+    for (const record of records) {
+      if (!isTraceEventRecord(record)) {
+        continue;
+      }
+
+      if (!parseSweBenchSessionId(record.sessionId, options.sessionIdPrefix)) {
+        skippedNonSwebenchSessionEvents += 1;
+        continue;
+      }
+
+      eventCount += 1;
+      const bucket =
+        eventsBySessionId.get(record.sessionId) ?? new Map<string, TraceEvent>();
+      if (bucket.has(record.id)) {
+        duplicateEventsDiscarded += 1;
+        eventsBySessionId.set(record.sessionId, bucket);
+        continue;
+      }
+
+      bucket.set(record.id, record);
+      eventsBySessionId.set(record.sessionId, bucket);
+    }
+  }
+
+  await rm(options.canonicalTraceRoot, { recursive: true, force: true });
+  await mkdir(options.canonicalTraceRoot, { recursive: true });
+
+  for (const [sessionId, eventsById] of eventsBySessionId.entries()) {
+    const events = [...eventsById.values()].sort((left, right) => {
+      if (left.timestamp < right.timestamp) {
+        return -1;
+      }
+      if (left.timestamp > right.timestamp) {
+        return 1;
+      }
+      return left.id.localeCompare(right.id);
+    });
+
+    const outPath = resolve(
+      options.canonicalTraceRoot,
+      "sessions",
+      `${sessionId}.jsonl`,
+    );
+    await mkdir(dirname(outPath), { recursive: true });
+    await writeFile(
+      outPath,
+      `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+      "utf-8",
+    );
+  }
+
+  return {
+    sourceTraceRoot: options.sourceTraceRoot,
+    canonicalTraceRoot: options.canonicalTraceRoot,
+    filesScanned: files.length,
+    swebenchEventsParsed: eventCount,
+    skippedNonSwebenchSessionEvents,
+    duplicateEventsDiscarded,
+    canonicalSessionCount: eventsBySessionId.size,
+  };
+}
+
 function eventTokenCount(event: TraceEvent): number {
   const tokens = event.metrics?.tokens;
   if (!tokens) {
@@ -547,10 +646,26 @@ async function main(): Promise<void> {
 
   const tsxBin = resolve(repoRoot, "node_modules/.bin/tsx");
 
+  let scoringTraceRootPath = traceRootPath;
+  let canonicalization: CanonicalizeSweBenchTraceResult | null = null;
+
+  if (options.canonicalizeTraces) {
+    scoringTraceRootPath = resolve(
+      repoRoot,
+      options.canonicalTraceRoot ?? `${options.traceRoot}_clean`,
+    );
+
+    canonicalization = await canonicalizeSweBenchTraceRoot({
+      sourceTraceRoot: traceRootPath,
+      canonicalTraceRoot: scoringTraceRootPath,
+      sessionIdPrefix: options.sessionIdPrefix,
+    });
+  }
+
   const observedArgs = [
     "scripts/run-observed-ab-long-horizon.ts",
     "--trace-root",
-    traceRootPath,
+    scoringTraceRootPath,
     "--format",
     options.format,
     "--tool-name",
@@ -576,7 +691,7 @@ async function main(): Promise<void> {
   const trajectoryArgs = [
     "scripts/run-trajectory-outcome-long-horizon.ts",
     "--trace-root",
-    traceRootPath,
+    scoringTraceRootPath,
     "--format",
     options.format,
     "--tool-name",
@@ -604,7 +719,7 @@ async function main(): Promise<void> {
   const observedReport = await readJsonFile<ObservedReport>(observedOut);
   const trajectoryReport = await readJsonFile<TrajectoryReport>(trajectoryOut);
 
-  const sessionData = await loadSessions(traceRootPath);
+  const sessionData = await loadSessions(scoringTraceRootPath);
   const sessionAggregates = summarizeSessions(sessionData.sessionsById);
   const taskPairedTrajectory = buildTaskPairedTrajectorySummary({
     sessionAggregates,
@@ -629,7 +744,9 @@ async function main(): Promise<void> {
       taskCount: taskPack.tasks.length,
       source: taskPack.source,
     },
-    traceRoot: traceRootPath,
+    traceRoot: scoringTraceRootPath,
+    traceRootRaw: traceRootPath,
+    traceCanonicalization: canonicalization,
     traceScan: {
       traceFilesFound: sessionData.traceFilesFound,
       traceEventFiles: sessionData.traceEventFiles,
