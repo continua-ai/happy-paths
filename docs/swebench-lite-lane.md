@@ -72,10 +72,11 @@ This helper:
 - captures logs/prompts under `pi_runs/logs/`,
 - writes extension traces under `trace-root`,
 - enforces a minimum timeout of 120s per task-side run (default 180s),
+- supports per-variant timeout budgets (`--off-timeout-seconds`, `--on-timeout-seconds`) when ON runs need extra headroom,
 - runs a provider/model preflight and fails fast if the requested pair is unavailable.
 
 For stable comparisons, use a fixed-slice protocol (same offset/count/tasks,
-same model/provider, same timeout) and multiple replicates (recommended `r=3`).
+same model/provider, same timeout policy) and multiple replicates (recommended `r=3`).
 
 To preserve trajectory-level causality for OFF vs ON comparisons, use a strict
 session ID format:
