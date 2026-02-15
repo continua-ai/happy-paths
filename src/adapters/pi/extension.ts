@@ -4,7 +4,7 @@ import {
   type ProjectIdentityOverrides,
   resolveProjectIdentity,
 } from "../../core/projectIdentity.js";
-import type { TraceScope } from "../../core/types.js";
+import type { LearningSuggestion, TraceScope } from "../../core/types.js";
 import type {
   PiBeforeAgentStartEvent,
   PiInputEvent,
@@ -106,6 +106,58 @@ function firstPlaybookAction(playbookMarkdown: string): string | null {
   const withoutPrefix = firstLine.startsWith("- ") ? firstLine.slice(2) : firstLine;
   const withoutActionLabel = withoutPrefix.replace(/^Action:\s*/i, "");
   return withoutActionLabel.trim() || null;
+}
+
+function rankSuggestionsByConfidence(
+  suggestions: LearningSuggestion[],
+): LearningSuggestion[] {
+  return [...suggestions].sort((left, right) => {
+    if (right.confidence !== left.confidence) {
+      return right.confidence - left.confidence;
+    }
+    return left.id.localeCompare(right.id);
+  });
+}
+
+function selectTopSuggestions(
+  suggestions: LearningSuggestion[],
+  maxSuggestions: number,
+): LearningSuggestion[] {
+  if (maxSuggestions <= 0 || suggestions.length === 0) {
+    return [];
+  }
+
+  const ranked = rankSuggestionsByConfidence(suggestions);
+  const top = ranked.slice(0, maxSuggestions);
+
+  if (top.some((suggestion) => suggestion.title === "Prior failure warning")) {
+    return top;
+  }
+
+  const bestFailureWarning = ranked.find((suggestion) => {
+    return suggestion.title === "Prior failure warning";
+  });
+
+  if (!bestFailureWarning) {
+    return top;
+  }
+
+  const withFailureWarning = [
+    ...top.slice(0, Math.max(0, top.length - 1)),
+    bestFailureWarning,
+  ];
+
+  const deduped: LearningSuggestion[] = [];
+  const seenIds = new Set<string>();
+  for (const suggestion of withFailureWarning) {
+    if (seenIds.has(suggestion.id)) {
+      continue;
+    }
+    seenIds.add(suggestion.id);
+    deduped.push(suggestion);
+  }
+
+  return deduped.slice(0, maxSuggestions);
 }
 
 function buildSuggestionRetrievalPlans(
@@ -377,14 +429,7 @@ export function createPiTraceExtension(
         return !suggestion.evidenceEventIds.includes(latestUserInputEventId);
       });
 
-      const rankedSuggestions = [...nonSelfSuggestions].sort((left, right) => {
-        if (right.confidence !== left.confidence) {
-          return right.confidence - left.confidence;
-        }
-        return left.id.localeCompare(right.id);
-      });
-
-      const topSuggestions = rankedSuggestions.slice(0, maxSuggestions);
+      const topSuggestions = selectTopSuggestions(nonSelfSuggestions, maxSuggestions);
       const retrievalHintCount = topSuggestions.filter((suggestion) => {
         return suggestion.id.startsWith("retrieval-");
       }).length;
@@ -394,6 +439,11 @@ export function createPiTraceExtension(
       const artifactHintCount = topSuggestions.filter((suggestion) => {
         return suggestion.id.startsWith("artifact-");
       }).length;
+      const availableFailureWarningHintCount = nonSelfSuggestions.filter(
+        (suggestion) => {
+          return suggestion.title === "Prior failure warning";
+        },
+      ).length;
 
       await ingest({
         type: "checkpoint",
@@ -405,6 +455,7 @@ export function createPiTraceExtension(
           hintCount: topSuggestions.length,
           retrievalHintCount,
           failureWarningHintCount,
+          availableFailureWarningHintCount,
           artifactHintCount,
           selfFilteredHintCount: Math.max(
             0,

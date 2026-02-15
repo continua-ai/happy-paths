@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
@@ -25,7 +25,9 @@ type PiRunRecord = {
   endedAtUtc: string;
   durationMs: number;
   exitCode: number;
+  rawExitCode: number;
   timedOut: boolean;
+  timeoutGuardNormalized: boolean;
   repoCheckoutPath: string;
   traceDataDir: string;
   promptPath: string;
@@ -33,6 +35,19 @@ type PiRunRecord = {
   stderrPath: string;
   finalAnswerPath: string;
   command: string;
+};
+
+type PriorHintVisibilitySummary = {
+  onRunCount: number;
+  onRunsWithCheckpoint: number;
+  onRunsWithHints: number;
+  onRunsWithRetrievalHints: number;
+  onRunsWithFailureWarningHints: number;
+  onRunsWithArtifactHints: number;
+  totalHintCount: number;
+  totalRetrievalHintCount: number;
+  totalFailureWarningHintCount: number;
+  totalArtifactHintCount: number;
 };
 
 type Manifest = {
@@ -62,6 +77,11 @@ type Manifest = {
     seedTraceRoot: string | null;
     cleanTraceRoot: boolean;
     pruneSeedTraceAfterRun: boolean;
+  };
+  qualityChecks: {
+    modelPreflightPassed: boolean;
+    timeoutGuardNormalizationCount: number;
+    priorHintVisibility: PriorHintVisibilitySummary;
   };
   runs: PiRunRecord[];
 };
@@ -229,7 +249,7 @@ function runCommandCaptured(options: {
   timeoutSeconds: number;
   env?: NodeJS.ProcessEnv;
 }): {
-  exitCode: number;
+  rawExitCode: number;
   timedOut: boolean;
   stdout: string;
   stderr: string;
@@ -251,10 +271,10 @@ function runCommandCaptured(options: {
   });
 
   if (!wrapped.error) {
-    const exitCode = wrapped.status ?? 1;
+    const rawExitCode = wrapped.status ?? 1;
     return {
-      exitCode,
-      timedOut: exitCode === 124,
+      rawExitCode,
+      timedOut: rawExitCode === 124,
       stdout: wrapped.stdout ?? "",
       stderr: wrapped.stderr ?? "",
     };
@@ -269,12 +289,213 @@ function runCommandCaptured(options: {
   });
 
   const timedOut = fallback.signal === "SIGTERM";
+  const rawExitCode = timedOut ? 124 : (fallback.status ?? 1);
 
   return {
-    exitCode: timedOut ? 124 : (fallback.status ?? 1),
+    rawExitCode,
     timedOut,
     stdout: fallback.stdout ?? "",
     stderr: fallback.stderr ?? "",
+  };
+}
+
+type ModelCatalogRow = {
+  provider: string;
+  model: string;
+};
+
+type PriorHintSessionSummary = {
+  hasCheckpoint: boolean;
+  hintCount: number;
+  retrievalHintCount: number;
+  failureWarningHintCount: number;
+  artifactHintCount: number;
+};
+
+function parseModelCatalogRows(raw: string): ModelCatalogRow[] {
+  const rows: ModelCatalogRow[] = [];
+
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("provider")) {
+      continue;
+    }
+
+    const tokens = trimmed.split(/\s+/);
+    if (tokens.length < 2) {
+      continue;
+    }
+
+    rows.push({
+      provider: tokens[0],
+      model: tokens[1],
+    });
+  }
+
+  return rows;
+}
+
+function ensureModelAvailableAndRunnable(options: {
+  provider: string | null;
+  model: string | null;
+}): void {
+  if (!options.provider || !options.model) {
+    return;
+  }
+
+  const listing = spawnSync("pi", ["--list-models", options.model], {
+    cwd: process.cwd(),
+    encoding: "utf-8",
+    env: process.env,
+  });
+
+  if (listing.status !== 0) {
+    throw new Error(
+      `model preflight failed while listing models for ${options.provider}/${options.model}: ${
+        listing.stderr?.trim() || "pi --list-models failed"
+      }`,
+    );
+  }
+
+  const rows = parseModelCatalogRows(listing.stdout ?? "");
+  const hasExact = rows.some(
+    (row) => row.provider === options.provider && row.model === options.model,
+  );
+
+  if (!hasExact) {
+    const related = rows
+      .filter((row) => row.model === options.model)
+      .map((row) => `${row.provider}/${row.model}`)
+      .slice(0, 8);
+    const relatedText = related.length > 0 ? related.join(", ") : "none";
+
+    throw new Error(
+      `requested model not listed: ${options.provider}/${options.model}. related matches: ${relatedText}`,
+    );
+  }
+
+  const healthcheck = spawnSync(
+    "pi",
+    [
+      "--provider",
+      options.provider,
+      "--model",
+      options.model,
+      "--no-session",
+      "--no-tools",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-themes",
+      "--print",
+      "Reply with OK only.",
+    ],
+    {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      maxBuffer: 5 * 1024 * 1024,
+      timeout: 120 * 1000,
+      env: process.env,
+    },
+  );
+
+  if (healthcheck.status !== 0) {
+    const stderr = (healthcheck.stderr ?? "").trim();
+    const stdout = (healthcheck.stdout ?? "").trim();
+    throw new Error(
+      `model preflight failed for ${options.provider}/${options.model}: status=${healthcheck.status ?? "unknown"} stderr=${stderr || "<empty>"} stdout=${stdout || "<empty>"}`,
+    );
+  }
+}
+
+async function summarizePriorHintsFromSession(
+  sessionPath: string,
+): Promise<PriorHintSessionSummary> {
+  const raw = await readFile(sessionPath, "utf-8").catch(() => "");
+  if (!raw.trim()) {
+    return {
+      hasCheckpoint: false,
+      hintCount: 0,
+      retrievalHintCount: 0,
+      failureWarningHintCount: 0,
+      artifactHintCount: 0,
+    };
+  }
+
+  let hasCheckpoint = false;
+  let hintCount = 0;
+  let retrievalHintCount = 0;
+  let failureWarningHintCount = 0;
+  let artifactHintCount = 0;
+
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    let event: unknown;
+    try {
+      event = JSON.parse(line) as unknown;
+    } catch {
+      continue;
+    }
+
+    if (!event || typeof event !== "object") {
+      continue;
+    }
+
+    const eventRecord = event as {
+      type?: unknown;
+      payload?: unknown;
+    };
+    if (eventRecord.type !== "checkpoint") {
+      continue;
+    }
+
+    if (!eventRecord.payload || typeof eventRecord.payload !== "object") {
+      continue;
+    }
+
+    const payload = eventRecord.payload as {
+      kind?: unknown;
+      hintCount?: unknown;
+      retrievalHintCount?: unknown;
+      failureWarningHintCount?: unknown;
+      artifactHintCount?: unknown;
+    };
+
+    if (payload.kind !== "happy_paths_prior_hints") {
+      continue;
+    }
+
+    hasCheckpoint = true;
+
+    const parsedHintCount =
+      typeof payload.hintCount === "number" ? payload.hintCount : 0;
+    const parsedRetrievalHintCount =
+      typeof payload.retrievalHintCount === "number" ? payload.retrievalHintCount : 0;
+    const parsedFailureWarningHintCount =
+      typeof payload.failureWarningHintCount === "number"
+        ? payload.failureWarningHintCount
+        : 0;
+    const parsedArtifactHintCount =
+      typeof payload.artifactHintCount === "number" ? payload.artifactHintCount : 0;
+
+    hintCount = Math.max(hintCount, parsedHintCount);
+    retrievalHintCount = Math.max(retrievalHintCount, parsedRetrievalHintCount);
+    failureWarningHintCount = Math.max(
+      failureWarningHintCount,
+      parsedFailureWarningHintCount,
+    );
+    artifactHintCount = Math.max(artifactHintCount, parsedArtifactHintCount);
+  }
+
+  return {
+    hasCheckpoint,
+    hintCount,
+    retrievalHintCount,
+    failureWarningHintCount,
+    artifactHintCount,
   };
 }
 
@@ -374,6 +595,11 @@ function resetRepoCheckout(repoDir: string, baseCommit: string): void {
     return;
   }
 
+  const indexLockPath = join(repoDir, ".git", "index.lock");
+  if (existsSync(indexLockPath)) {
+    rmSync(indexLockPath, { force: true });
+  }
+
   runCommand(repoDir, "git", ["checkout", "--force", baseCommit]);
   runCommand(repoDir, "git", ["reset", "--hard", baseCommit]);
   runCommand(repoDir, "git", ["clean", "-fd"]);
@@ -420,22 +646,27 @@ async function prepareTraceDataDir(options: {
     return options.traceRoot;
   }
 
-  const runTraceDir = resolve(
+  const isolatedRoot = resolve(
     options.traceRoot,
     "isolated",
     sanitizePathComponent(options.instanceId),
     `r${options.replicate}`,
-    options.variant,
   );
 
-  await rm(runTraceDir, { recursive: true, force: true });
-  await mkdir(runTraceDir, { recursive: true });
-
   if (options.seedTraceRoot) {
-    await copyDirectoryContents(options.seedTraceRoot, runTraceDir);
+    const variantTraceDir = resolve(isolatedRoot, options.variant);
+    await rm(variantTraceDir, { recursive: true, force: true });
+    await mkdir(variantTraceDir, { recursive: true });
+    await copyDirectoryContents(options.seedTraceRoot, variantTraceDir);
+    return variantTraceDir;
   }
 
-  return runTraceDir;
+  if (options.variant === "off") {
+    await rm(isolatedRoot, { recursive: true, force: true });
+  }
+  await mkdir(isolatedRoot, { recursive: true });
+
+  return isolatedRoot;
 }
 
 async function pruneTraceDataDirToSession(
@@ -549,9 +780,20 @@ async function runVariant(options: {
     env,
   });
   const endedAt = new Date();
+  const durationMs = endedAt.getTime() - startedAt.getTime();
+  const timeoutBudgetMs = options.timeoutSeconds * 1000;
+  const timeoutGuardNormalized = !run.timedOut && durationMs > timeoutBudgetMs + 5_000;
+  const timedOut = run.timedOut || timeoutGuardNormalized;
+  const exitCode = timedOut ? 124 : run.rawExitCode;
+
+  let stderrOutput = run.stderr;
+  if (timeoutGuardNormalized) {
+    const timeoutGuardNote = `[timeout-guard] normalized timeout after overrun: durationMs=${durationMs}, timeoutBudgetMs=${timeoutBudgetMs}, rawExitCode=${run.rawExitCode}`;
+    stderrOutput = `${stderrOutput}${stderrOutput ? "\n" : ""}${timeoutGuardNote}\n`;
+  }
 
   await writeFile(stdoutPath, run.stdout, "utf-8");
-  await writeFile(stderrPath, run.stderr, "utf-8");
+  await writeFile(stderrPath, stderrOutput, "utf-8");
   await writeFile(finalAnswerPath, run.stdout, "utf-8");
 
   if (options.pruneTraceDataDirToSession) {
@@ -567,9 +809,11 @@ async function runVariant(options: {
     sessionId,
     startedAtUtc: startedAt.toISOString(),
     endedAtUtc: endedAt.toISOString(),
-    durationMs: endedAt.getTime() - startedAt.getTime(),
-    exitCode: run.exitCode,
-    timedOut: run.timedOut,
+    durationMs,
+    exitCode,
+    rawExitCode: run.rawExitCode,
+    timedOut,
+    timeoutGuardNormalized,
     repoCheckoutPath: options.repoCheckoutPath,
     traceDataDir: options.traceDataDir,
     promptPath,
@@ -602,6 +846,11 @@ async function main(): Promise<void> {
   if (seedTraceRoot && !existsSync(seedTraceRoot)) {
     throw new Error(`seed trace root not found: ${seedTraceRoot}`);
   }
+
+  ensureModelAvailableAndRunnable({
+    provider: options.provider,
+    model: options.model,
+  });
 
   const taskPack = parseTaskPack(await readFile(tasksPath, "utf-8"));
   const selectedTasks = taskPack.tasks.slice(
@@ -685,10 +934,70 @@ async function main(): Promise<void> {
         runs.push(record);
 
         console.log(
-          `[swebench-pi] done ${task.instanceId} ${variant} r${replicate} exit=${record.exitCode} timeout=${record.timedOut} durationMs=${record.durationMs}`,
+          `[swebench-pi] done ${task.instanceId} ${variant} r${replicate} exit=${record.exitCode} rawExit=${record.rawExitCode} timeout=${record.timedOut} timeoutNormalized=${record.timeoutGuardNormalized} durationMs=${record.durationMs}`,
         );
       }
     }
+  }
+
+  const onRuns = runs.filter((run) => run.variant === "on");
+  let onRunsWithCheckpoint = 0;
+  let onRunsWithHints = 0;
+  let onRunsWithRetrievalHints = 0;
+  let onRunsWithFailureWarningHints = 0;
+  let onRunsWithArtifactHints = 0;
+  let totalHintCount = 0;
+  let totalRetrievalHintCount = 0;
+  let totalFailureWarningHintCount = 0;
+  let totalArtifactHintCount = 0;
+
+  for (const run of onRuns) {
+    const sessionPath = resolve(run.traceDataDir, "sessions", `${run.sessionId}.jsonl`);
+    const summary = await summarizePriorHintsFromSession(sessionPath);
+
+    if (summary.hasCheckpoint) {
+      onRunsWithCheckpoint += 1;
+    }
+    if (summary.hintCount > 0) {
+      onRunsWithHints += 1;
+    }
+    if (summary.retrievalHintCount > 0) {
+      onRunsWithRetrievalHints += 1;
+    }
+    if (summary.failureWarningHintCount > 0) {
+      onRunsWithFailureWarningHints += 1;
+    }
+    if (summary.artifactHintCount > 0) {
+      onRunsWithArtifactHints += 1;
+    }
+
+    totalHintCount += summary.hintCount;
+    totalRetrievalHintCount += summary.retrievalHintCount;
+    totalFailureWarningHintCount += summary.failureWarningHintCount;
+    totalArtifactHintCount += summary.artifactHintCount;
+  }
+
+  const priorHintVisibility: PriorHintVisibilitySummary = {
+    onRunCount: onRuns.length,
+    onRunsWithCheckpoint,
+    onRunsWithHints,
+    onRunsWithRetrievalHints,
+    onRunsWithFailureWarningHints,
+    onRunsWithArtifactHints,
+    totalHintCount,
+    totalRetrievalHintCount,
+    totalFailureWarningHintCount,
+    totalArtifactHintCount,
+  };
+
+  const timeoutGuardNormalizationCount = runs.filter(
+    (run) => run.timeoutGuardNormalized,
+  ).length;
+
+  if (onRuns.length > 0 && options.onMaxSuggestions > 0 && onRunsWithHints === 0) {
+    console.warn(
+      `[swebench-pi] WARN: ON hint visibility is zero (${onRunsWithHints}/${onRuns.length}). Consider --trace-state-mode shared or seeded traces for ON retrieval visibility.`,
+    );
   }
 
   const manifest: Manifest = {
@@ -720,6 +1029,11 @@ async function main(): Promise<void> {
       pruneSeedTraceAfterRun:
         options.traceStateMode === "isolated" && seedTraceRoot !== null,
     },
+    qualityChecks: {
+      modelPreflightPassed: true,
+      timeoutGuardNormalizationCount,
+      priorHintVisibility,
+    },
     runs,
   };
 
@@ -733,6 +1047,7 @@ async function main(): Promise<void> {
         traceRoot,
         selectedTasks: manifest.selection.selectedInstanceIds,
         runCount: runs.length,
+        qualityChecks: manifest.qualityChecks,
       },
       null,
       2,

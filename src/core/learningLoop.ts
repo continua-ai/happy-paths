@@ -40,6 +40,7 @@ const MIN_MISMATCH_WARNING_CONFIDENCE = 0.12;
 const MIN_ARTIFACT_SUPPORT_COUNT = 2;
 const MIN_ARTIFACT_SUPPORT_SESSION_COUNT = 2;
 const WEAK_RETRIEVAL_CONFIDENCE_THRESHOLD = 0.45;
+const MAX_READ_HINTS_WHEN_COMMAND_HINTS_EXIST = 1;
 
 function clipForHint(text: string, maxLength = 180): string {
   if (text.length <= maxLength) {
@@ -170,6 +171,16 @@ function isLowSignalCommand(command: string): boolean {
   return !hasTargetMarker;
 }
 
+function isEnvironmentSensitiveReplayCommand(command: string): boolean {
+  return (
+    /sys\.path\s*=\s*\[p\s+for\s+p\s+in\s+sys\.path\s+if\s+p\s+not\s+in\s*\(''\s*,\s*os\.getcwd\(\)\)\]/i.test(
+      command,
+    ) ||
+    /django\.__file__/i.test(command) ||
+    /\/swebench_pi_workspaces_/i.test(command)
+  );
+}
+
 function commandConfidenceScale(command: string): number {
   if (isLowSignalCommand(command)) {
     return 0.15;
@@ -193,6 +204,29 @@ function toolResultOutcomeFromSearchResult(hit: SearchResult): ToolResultOutcome
   }
 
   return "unknown";
+}
+
+function buildFailureOnlySearchQuery(query: SearchQuery): SearchQuery | null {
+  const filters = query.filters;
+  if (!filters || filters.eventType !== "tool_result") {
+    return null;
+  }
+
+  if (filters.isError !== false) {
+    return null;
+  }
+
+  return {
+    ...query,
+    limit: Math.max(
+      query.limit ?? RETRIEVAL_SUGGESTION_LIMIT,
+      RETRIEVAL_SUGGESTION_LIMIT,
+    ),
+    filters: {
+      ...filters,
+      isError: true,
+    },
+  };
 }
 
 function retrievalHintFromText(text: string, kind: RetrievalHintKind): RetrievalHint {
@@ -494,10 +528,15 @@ export class LearningLoop {
 
   async suggest(query: SearchQuery): Promise<LearningSuggestion[]> {
     const retrieval = await this.retrieve(query);
+    const failureOnlyQuery = buildFailureOnlySearchQuery(query);
+    const failureLaneRetrieval = failureOnlyQuery
+      ? await this.retrieve(failureOnlyQuery)
+      : [];
+
     const suggestions: LearningSuggestion[] = [];
 
     const byEventId = new Map<string, SearchResult>();
-    for (const hit of retrieval) {
+    for (const hit of [...retrieval, ...failureLaneRetrieval]) {
       const key = hit.document.sourceEventId;
       if (!byEventId.has(key)) {
         byEventId.set(key, hit);
@@ -515,15 +554,28 @@ export class LearningLoop {
     const topNonFailureScore = nonFailureRetrieval[0]?.score ?? 0;
     const topFailureScore = failureRetrieval[0]?.score ?? 0;
     const seenActionKeys = new Set<string>();
+    const seenPositiveActionKeys = new Set<string>();
+
     const deprioritizedCandidates: Array<{
       hit: SearchResult;
       hint: RetrievalHint;
       confidence: number;
     }> = [];
 
+    const positiveCandidates: Array<{
+      hit: SearchResult;
+      hint: RetrievalHint;
+      confidence: number;
+      isReadPayloadHint: boolean;
+    }> = [];
+
     for (const hit of nonFailureRetrieval) {
       const hint = retrievalHintFromText(hit.document.text, "positive");
-      if (seenActionKeys.has(hint.actionKey)) {
+      if (seenPositiveActionKeys.has(hint.actionKey)) {
+        continue;
+      }
+
+      if (hint.command && isEnvironmentSensitiveReplayCommand(hint.command)) {
         continue;
       }
 
@@ -544,23 +596,62 @@ export class LearningLoop {
         continue;
       }
 
-      seenActionKeys.add(hint.actionKey);
-      suggestions.push({
-        id: `retrieval-${suggestions.length}-${hit.document.id}`,
-        title: "Related prior tool result",
-        rationale: hint.rationale,
+      seenPositiveActionKeys.add(hint.actionKey);
+      positiveCandidates.push({
+        hit,
+        hint,
         confidence,
-        evidenceEventIds: [hit.document.sourceEventId],
+        isReadPayloadHint:
+          hint.command === null && hit.document.metadata?.toolName === "read",
+      });
+    }
+
+    const commandBearingCandidates = positiveCandidates.filter((candidate) => {
+      return candidate.hint.command !== null;
+    });
+    const payloadCandidates = positiveCandidates.filter((candidate) => {
+      return candidate.hint.command === null;
+    });
+
+    const commandBearingHintsAvailable = commandBearingCandidates.length > 0;
+    let selectedReadPayloadHintCount = 0;
+
+    for (const candidate of [...commandBearingCandidates, ...payloadCandidates]) {
+      if (seenActionKeys.has(candidate.hint.actionKey)) {
+        continue;
+      }
+
+      if (
+        candidate.isReadPayloadHint &&
+        commandBearingHintsAvailable &&
+        selectedReadPayloadHintCount >= MAX_READ_HINTS_WHEN_COMMAND_HINTS_EXIST
+      ) {
+        continue;
+      }
+
+      seenActionKeys.add(candidate.hint.actionKey);
+      suggestions.push({
+        id: `retrieval-${suggestions.length}-${candidate.hit.document.id}`,
+        title: "Related prior tool result",
+        rationale: candidate.hint.rationale,
+        confidence: candidate.confidence,
+        evidenceEventIds: [candidate.hit.document.sourceEventId],
         playbookMarkdown: `- Action: ${actionForRetrievalHint(
-          hint,
-          confidence,
+          candidate.hint,
+          candidate.confidence,
         )}\n- Validate with targeted checks before applying broad changes.`,
       });
+
+      if (candidate.isReadPayloadHint) {
+        selectedReadPayloadHintCount += 1;
+      }
 
       if (suggestions.length >= RETRIEVAL_SUGGESTION_LIMIT) {
         break;
       }
     }
+
+    let hasFailureWarningSuggestion = false;
 
     const mismatchFailureCandidate = failureRetrieval.find((hit) => {
       const confidence = retrievalConfidence(hit.score, topFailureScore);
@@ -591,10 +682,18 @@ export class LearningLoop {
           evidenceEventIds: [mismatchFailureCandidate.document.sourceEventId],
           playbookMarkdown: `- Action: ${verifyFirstAction(hint.command)}\n- Confirm the root cause has changed before retrying.`,
         });
+        hasFailureWarningSuggestion = true;
       }
     }
 
-    if (suggestions.length === 0 && failureRetrieval.length > 0) {
+    const shouldInjectFailureWarningFromFailureLane =
+      failureOnlyQuery !== null && failureLaneRetrieval.length > 0;
+
+    if (
+      !hasFailureWarningSuggestion &&
+      failureRetrieval.length > 0 &&
+      (suggestions.length === 0 || shouldInjectFailureWarningFromFailureLane)
+    ) {
       const fallbackFailure = failureRetrieval[0];
       if (fallbackFailure) {
         const confidence = retrievalConfidence(fallbackFailure.score, topFailureScore);
@@ -603,14 +702,18 @@ export class LearningLoop {
             fallbackFailure.document.text,
             "failure_warning",
           );
-          suggestions.push({
-            id: `retrieval-failure-warning-${fallbackFailure.document.id}`,
-            title: "Prior failure warning",
-            rationale: hint.rationale,
-            confidence: Math.min(0.7, Math.max(0.2, confidence)),
-            evidenceEventIds: [fallbackFailure.document.sourceEventId],
-            playbookMarkdown: `- Action: ${verifyFirstAction(hint.command)}\n- Confirm the root cause has changed before retrying.`,
-          });
+          if (!seenActionKeys.has(hint.actionKey)) {
+            seenActionKeys.add(hint.actionKey);
+            suggestions.push({
+              id: `retrieval-failure-warning-${fallbackFailure.document.id}`,
+              title: "Prior failure warning",
+              rationale: hint.rationale,
+              confidence: Math.min(0.7, Math.max(0.2, confidence)),
+              evidenceEventIds: [fallbackFailure.document.sourceEventId],
+              playbookMarkdown: `- Action: ${verifyFirstAction(hint.command)}\n- Confirm the root cause has changed before retrying.`,
+            });
+            hasFailureWarningSuggestion = true;
+          }
         }
       }
     }

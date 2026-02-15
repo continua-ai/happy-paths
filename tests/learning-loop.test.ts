@@ -27,6 +27,46 @@ class StaticResultIndex implements TraceIndex {
   }
 }
 
+function matchesFilters(
+  metadata: Record<string, string | number | boolean | null> | undefined,
+  filters: Record<string, string | number | boolean> | undefined,
+): boolean {
+  if (!filters) {
+    return true;
+  }
+
+  if (!metadata) {
+    return false;
+  }
+
+  for (const [key, value] of Object.entries(filters)) {
+    if (metadata[key] !== value) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+class FilterAwareStaticResultIndex implements TraceIndex {
+  constructor(private readonly results: SearchResult[]) {}
+
+  async upsert(_document: IndexedDocument): Promise<void> {
+    return;
+  }
+
+  async upsertMany(_documents: IndexedDocument[]): Promise<void> {
+    return;
+  }
+
+  async search(query: SearchQuery): Promise<SearchResult[]> {
+    const filtered = this.results.filter((result) => {
+      return matchesFilters(result.document.metadata, query.filters);
+    });
+    return filtered.slice(0, query.limit ?? filtered.length);
+  }
+}
+
 afterEach(async () => {
   while (tempDirs.length > 0) {
     const path = tempDirs.pop();
@@ -291,6 +331,168 @@ describe("LearningLoop", () => {
     expect(suggestions.length).toBeGreaterThan(0);
     expect(suggestions[0]?.title).toBe("Prior failure warning");
     expect(suggestions[0]?.rationale).toContain("mismatch patterns");
+  });
+
+  it("injects a failure warning when querying non-error history with similar failures", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new FilterAwareStaticResultIndex([
+        {
+          document: {
+            id: "doc-success",
+            sourceEventId: "event-success",
+            text: 'tool_result pi {"command":"pytest tests/unit/test_models.py -k login --maxfail=1","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 9,
+        },
+        {
+          document: {
+            id: "doc-failure",
+            sourceEventId: "event-failure",
+            text: 'tool_result pi {"command":"pytest tests/unit/test_models.py","text":"AssertionError: login failed","isError":true}',
+            metadata: {
+              eventType: "tool_result",
+              isError: true,
+              outcome: "failure",
+            },
+          },
+          score: 8,
+        },
+      ]),
+    });
+
+    const suggestions = await loop.suggest({
+      text: "login failed",
+      filters: {
+        eventType: "tool_result",
+        isError: false,
+      },
+    });
+
+    expect(
+      suggestions.some((suggestion) => suggestion.title === "Prior failure warning"),
+    ).toBe(true);
+    expect(
+      suggestions.some(
+        (suggestion) => suggestion.title === "Related prior tool result",
+      ),
+    ).toBe(true);
+  });
+
+  it("filters environment-sensitive replay commands from positive hints", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([
+        {
+          document: {
+            id: "doc-env-sensitive",
+            sourceEventId: "event-env-sensitive",
+            text: 'tool_result pi {"command":"python - <<\'PY\'\\nimport sys, os\\nsys.path=[p for p in sys.path if p not in (\'\', os.getcwd())]\\nimport django\\nprint(django.__file__)\\nPY","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 10,
+        },
+        {
+          document: {
+            id: "doc-safe",
+            sourceEventId: "event-safe",
+            text: 'tool_result pi {"command":"pytest tests/forms_tests/tests/test_media.py -q","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 9,
+        },
+      ]),
+    });
+
+    const suggestions = await loop.suggest({ text: "media merge regression" });
+
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]?.evidenceEventIds).toEqual(["event-safe"]);
+  });
+
+  it("caps read payload hints when command hints are available", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([
+        {
+          document: {
+            id: "doc-command",
+            sourceEventId: "event-command",
+            text: 'tool_result pi {"command":"pytest tests/lookup/tests.py::LookupTests::test_exact_query_rhs_with_selected_columns","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              toolName: "bash",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 9,
+        },
+        {
+          document: {
+            id: "doc-read-1",
+            sourceEventId: "event-read-1",
+            text: 'tool_result pi {"text":"first read payload","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              toolName: "read",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 8,
+        },
+        {
+          document: {
+            id: "doc-read-2",
+            sourceEventId: "event-read-2",
+            text: 'tool_result pi {"text":"second read payload","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              toolName: "read",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 7,
+        },
+      ]),
+    });
+
+    const suggestions = await loop.suggest({ text: "lookup group by regression" });
+
+    expect(
+      suggestions.some(
+        (suggestion) => suggestion.evidenceEventIds[0] === "event-command",
+      ),
+    ).toBe(true);
+    const readSuggestionCount = suggestions.filter((suggestion) => {
+      const eventId = suggestion.evidenceEventIds[0];
+      return eventId === "event-read-1" || eventId === "event-read-2";
+    }).length;
+    expect(readSuggestionCount).toBeLessThanOrEqual(1);
   });
 
   it("deprioritizes low-signal commands when better retrieval hints exist", async () => {
