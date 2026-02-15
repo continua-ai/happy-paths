@@ -141,6 +141,12 @@ By default, the lane evaluates task-paired validity gates:
 - `--min-qualified-task-paired-count` (default `3`)
 - `--min-on-checkpoint-coverage` (default `0.8`)
 - `--max-on-vs-off-likely-censored-rate-delta` (default `0.2`)
+- `--max-on-vs-off-timeout-rate-delta` (default `0.2`, when timeout data is available)
+
+To include exact timeout asymmetry in validity scoring, pass the run manifest from
+`benchmark:swebench-lite:pi`:
+
+- `--runs-manifest /path/to/pi_runs/manifest.json`
 
 Use `--no-task-paired-validity-gates` to disable these checks (debug-only).
 With `--strict`, validity gate failures will fail the lane command.
@@ -185,6 +191,9 @@ Practical rule of thumb:
 - If `taskPairedValidity.gateResult.pass` is false, treat task-paired deltas as
   provisional and prefer `taskPairedTrajectoryQualified` for quality-sensitive
   comparisons.
+- When `--runs-manifest` is provided, `taskPairedValidity.summary` also includes
+  exact ON/OFF timeout rates and timeout-rate delta (instead of relying only on
+  likely-censored proxies).
 - Use long-horizon observed/trajectory lanes as secondary diagnostics until
   pairability is sufficiently powered.
 - Benchmark-agnostic policy: do **not** tune retrieval/hint behavior on specific
