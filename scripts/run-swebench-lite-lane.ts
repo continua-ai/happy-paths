@@ -59,6 +59,22 @@ type TrajectoryReport = {
   };
 };
 
+type PiRunManifest = {
+  runs: Array<{
+    sessionId: string;
+    variant?: "off" | "on";
+    timedOut: boolean;
+  }>;
+};
+
+type RunTimeoutSummary = {
+  offRunsTimedOut: number;
+  onRunsTimedOut: number;
+  offTimeoutRate: number;
+  onTimeoutRate: number;
+  timeoutRateDeltaOnMinusOff: number;
+};
+
 type SessionAggregate = {
   sessionId: string;
   eventCount: number;
@@ -99,6 +115,7 @@ type TaskPairedValidityThresholds = {
   minQualifiedPairCount: number;
   minOnCheckpointCoverage: number;
   maxOnVsOffLikelyCensoredRateDelta: number;
+  maxOnVsOffTimeoutRateDelta: number;
 };
 
 type TaskPairedRunQualitySummary = {
@@ -109,6 +126,11 @@ type TaskPairedRunQualitySummary = {
   offLikelyCensoredRate: number;
   onLikelyCensoredRate: number;
   likelyCensoredRateDeltaOnMinusOff: number;
+  offRunsTimedOut: number | null;
+  onRunsTimedOut: number | null;
+  offTimeoutRate: number | null;
+  onTimeoutRate: number | null;
+  timeoutRateDeltaOnMinusOff: number | null;
   onRunsWithCheckpoint: number;
   onCheckpointCoverage: number;
   onRunsWithHints: number;
@@ -155,12 +177,14 @@ function parseArgs(argv: string[]): {
   minFamilyDisjointPairCount: number;
   outDir: string;
   sessionIdPrefix: string;
+  runsManifest: string | null;
   requireTaskPairs: boolean;
   strict: boolean;
   enableTaskPairedValidityGates: boolean;
   minQualifiedTaskPairedCount: number;
   minOnCheckpointCoverage: number;
   maxOnVsOffLikelyCensoredRateDelta: number;
+  maxOnVsOffTimeoutRateDelta: number;
 } {
   const options = {
     tasks: ".happy-paths/benchmarks/swebench_lite_50/tasks.json",
@@ -176,12 +200,14 @@ function parseArgs(argv: string[]): {
     minFamilyDisjointPairCount: 20,
     outDir: ".happy-paths/benchmarks/swebench_lite_50/results",
     sessionIdPrefix: "swebench",
+    runsManifest: null as string | null,
     requireTaskPairs: false,
     strict: false,
     enableTaskPairedValidityGates: true,
     minQualifiedTaskPairedCount: 3,
     minOnCheckpointCoverage: 0.8,
     maxOnVsOffLikelyCensoredRateDelta: 0.2,
+    maxOnVsOffTimeoutRateDelta: 0.2,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -262,6 +288,11 @@ function parseArgs(argv: string[]): {
       index += 1;
       continue;
     }
+    if (token === "--runs-manifest") {
+      options.runsManifest = String(value);
+      index += 1;
+      continue;
+    }
     if (token === "--require-task-pairs") {
       options.requireTaskPairs = true;
       continue;
@@ -288,6 +319,14 @@ function parseArgs(argv: string[]): {
     }
     if (token === "--max-on-vs-off-likely-censored-rate-delta") {
       options.maxOnVsOffLikelyCensoredRateDelta = Math.max(
+        0,
+        Math.min(1, parseFloatArg(String(value), token)),
+      );
+      index += 1;
+      continue;
+    }
+    if (token === "--max-on-vs-off-timeout-rate-delta") {
+      options.maxOnVsOffTimeoutRateDelta = Math.max(
         0,
         Math.min(1, parseFloatArg(String(value), token)),
       );
@@ -708,6 +747,67 @@ function isLikelyCensoredSession(
   return false;
 }
 
+function buildRunTimeoutSummary(options: {
+  runsManifest: PiRunManifest | null;
+  sessionIdPrefix: string;
+  sessionIdsInScope: Set<string>;
+}): RunTimeoutSummary | null {
+  if (!options.runsManifest || !Array.isArray(options.runsManifest.runs)) {
+    return null;
+  }
+
+  let offRunCount = 0;
+  let onRunCount = 0;
+  let offRunsTimedOut = 0;
+  let onRunsTimedOut = 0;
+
+  for (const run of options.runsManifest.runs) {
+    if (!options.sessionIdsInScope.has(run.sessionId)) {
+      continue;
+    }
+
+    let variant: "off" | "on" | null = null;
+    if (run.variant === "off" || run.variant === "on") {
+      variant = run.variant;
+    } else {
+      const identity = parseSweBenchSessionId(run.sessionId, options.sessionIdPrefix);
+      variant = identity?.variant ?? null;
+    }
+
+    if (!variant) {
+      continue;
+    }
+
+    if (variant === "off") {
+      offRunCount += 1;
+      if (run.timedOut) {
+        offRunsTimedOut += 1;
+      }
+      continue;
+    }
+
+    onRunCount += 1;
+    if (run.timedOut) {
+      onRunsTimedOut += 1;
+    }
+  }
+
+  if (offRunCount + onRunCount < 1) {
+    return null;
+  }
+
+  const offTimeoutRate = rate(offRunsTimedOut, offRunCount);
+  const onTimeoutRate = rate(onRunsTimedOut, onRunCount);
+
+  return {
+    offRunsTimedOut,
+    onRunsTimedOut,
+    offTimeoutRate,
+    onTimeoutRate,
+    timeoutRateDeltaOnMinusOff: onTimeoutRate - offTimeoutRate,
+  };
+}
+
 function buildTaskPairedTrajectorySummary(options: {
   sessionAggregates: Map<string, SessionAggregate>;
   sessionIdPrefix: string;
@@ -787,6 +887,7 @@ function buildTaskPairedRunQualitySummary(options: {
   sessionIdPrefix: string;
   pairingFromAggregates: SweBenchPairingFromAggregates;
   minToolResultCount: number;
+  runTimeoutSummary: RunTimeoutSummary | null;
 }): TaskPairedRunQualitySummary {
   const offSessions: SessionAggregate[] = [];
   const onSessions: SessionAggregate[] = [];
@@ -851,6 +952,12 @@ function buildTaskPairedRunQualitySummary(options: {
     offLikelyCensoredRate,
     onLikelyCensoredRate,
     likelyCensoredRateDeltaOnMinusOff: onLikelyCensoredRate - offLikelyCensoredRate,
+    offRunsTimedOut: options.runTimeoutSummary?.offRunsTimedOut ?? null,
+    onRunsTimedOut: options.runTimeoutSummary?.onRunsTimedOut ?? null,
+    offTimeoutRate: options.runTimeoutSummary?.offTimeoutRate ?? null,
+    onTimeoutRate: options.runTimeoutSummary?.onTimeoutRate ?? null,
+    timeoutRateDeltaOnMinusOff:
+      options.runTimeoutSummary?.timeoutRateDeltaOnMinusOff ?? null,
     onRunsWithCheckpoint,
     onCheckpointCoverage: rate(onRunsWithCheckpoint, onRunCount),
     onRunsWithHints,
@@ -892,6 +999,16 @@ function evaluateTaskPairedValidityGate(options: {
     );
   }
 
+  if (
+    options.summary.timeoutRateDeltaOnMinusOff !== null &&
+    options.summary.timeoutRateDeltaOnMinusOff >
+      options.thresholds.maxOnVsOffTimeoutRateDelta
+  ) {
+    failures.push(
+      `on-off timeout rate delta ${options.summary.timeoutRateDeltaOnMinusOff.toFixed(3)} > ${options.thresholds.maxOnVsOffTimeoutRateDelta.toFixed(3)}`,
+    );
+  }
+
   return {
     pass: failures.length === 0,
     failures,
@@ -909,6 +1026,9 @@ async function main(): Promise<void> {
 
   const taskPackPath = resolve(repoRoot, options.tasks);
   const traceRootPath = resolve(repoRoot, options.traceRoot);
+  const runsManifestPath = options.runsManifest
+    ? resolve(repoRoot, options.runsManifest)
+    : null;
 
   await mkdir(outDir, { recursive: true });
 
@@ -988,12 +1108,20 @@ async function main(): Promise<void> {
 
   const observedReport = await readJsonFile<ObservedReport>(observedOut);
   const trajectoryReport = await readJsonFile<TrajectoryReport>(trajectoryOut);
+  const runsManifest = runsManifestPath
+    ? await readJsonFile<PiRunManifest>(runsManifestPath)
+    : null;
 
   const sessionData = await loadSessions(scoringTraceRootPath);
   const sessionAggregates = summarizeSessions(sessionData.sessionsById);
   const pairingFromAggregates = buildSweBenchPairingFromAggregates({
     sessionAggregates,
     sessionIdPrefix: options.sessionIdPrefix,
+  });
+  const runTimeoutSummary = buildRunTimeoutSummary({
+    runsManifest,
+    sessionIdPrefix: options.sessionIdPrefix,
+    sessionIdsInScope: new Set(sessionAggregates.keys()),
   });
 
   const taskPairedTrajectory = buildTaskPairedTrajectorySummary({
@@ -1007,12 +1135,14 @@ async function main(): Promise<void> {
     sessionIdPrefix: options.sessionIdPrefix,
     pairingFromAggregates,
     minToolResultCount: options.minToolResultCount,
+    runTimeoutSummary,
   });
 
   const taskPairedValidityThresholds: TaskPairedValidityThresholds = {
     minQualifiedPairCount: options.minQualifiedTaskPairedCount,
     minOnCheckpointCoverage: options.minOnCheckpointCoverage,
     maxOnVsOffLikelyCensoredRateDelta: options.maxOnVsOffLikelyCensoredRateDelta,
+    maxOnVsOffTimeoutRateDelta: options.maxOnVsOffTimeoutRateDelta,
   };
 
   const taskPairedValidityGateResult = options.enableTaskPairedValidityGates
@@ -1067,6 +1197,7 @@ async function main(): Promise<void> {
     },
     traceRoot: scoringTraceRootPath,
     traceRootRaw: traceRootPath,
+    runsManifestPath,
     traceCanonicalization: canonicalization,
     traceScan: {
       traceFilesFound: sessionData.traceFilesFound,
@@ -1089,6 +1220,7 @@ async function main(): Promise<void> {
         taskPairedTrajectoryQualified.pairedRunCountWithMetrics,
       taskPairedValidityGatesEnabled: options.enableTaskPairedValidityGates,
       taskPairedValidityGatePass: taskPairedValidityGateResult.pass,
+      hasRunTimeoutSummary: runTimeoutSummary !== null,
       observedLongHorizonPairCount: observedPairCount,
       trajectoryLongHorizonPairCount: trajectoryPairCount,
       longHorizonPairabilitySparse: observedPairCount < 3 || trajectoryPairCount < 3,
@@ -1164,6 +1296,10 @@ async function main(): Promise<void> {
             onCheckpointCoverage: taskPairedRunQualitySummary.onCheckpointCoverage,
             likelyCensoredRateDeltaOnMinusOff:
               taskPairedRunQualitySummary.likelyCensoredRateDeltaOnMinusOff,
+            timeoutRateDeltaOnMinusOff:
+              taskPairedRunQualitySummary.timeoutRateDeltaOnMinusOff,
+            onTimeoutRate: taskPairedRunQualitySummary.onTimeoutRate,
+            offTimeoutRate: taskPairedRunQualitySummary.offTimeoutRate,
             qualifiedPairCount: taskPairedRunQualitySummary.qualifiedPairCount,
           },
         },
