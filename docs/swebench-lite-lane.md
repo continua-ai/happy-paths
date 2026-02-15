@@ -78,6 +78,42 @@ This helper:
 For stable comparisons, use a fixed-slice protocol (same offset/count/tasks,
 same model/provider, same timeout policy) and multiple replicates (recommended `r=3`).
 
+Powered confirmation recipe (20-task fixed slice):
+
+```bash
+npm run benchmark:swebench-lite:pi -- \
+  --tasks .happy-paths/benchmarks/swebench_lite_50/tasks.json \
+  --offset 6 \
+  --count 20 \
+  --replicates 3 \
+  --trace-root .happy-paths/benchmarks/swebench_lite_50/traces \
+  --workspace-root .happy-paths/benchmarks/swebench_lite_50/workspaces \
+  --out-dir .happy-paths/benchmarks/swebench_lite_50/pi_runs \
+  --session-id-prefix swebench \
+  --trace-state-mode isolated \
+  --timeout-seconds 300 \
+  --off-timeout-seconds 300 \
+  --on-timeout-seconds 480 \
+  --provider openai-codex \
+  --model gpt-5.3-codex
+```
+
+Then score with the corresponding run manifest so validity gates include exact
+ON/OFF timeout asymmetry:
+
+```bash
+npm run benchmark:swebench-lite:lane -- \
+  --tasks .happy-paths/benchmarks/swebench_lite_50/tasks.json \
+  --trace-root .happy-paths/benchmarks/swebench_lite_50/traces \
+  --runs-manifest .happy-paths/benchmarks/swebench_lite_50/pi_runs/manifest.json \
+  --format trace \
+  --tool-name bash \
+  --session-id-prefix swebench \
+  --require-task-pairs \
+  --min-family-disjoint-pair-count 20 \
+  --out-dir .happy-paths/benchmarks/swebench_lite_50/results
+```
+
 To preserve trajectory-level causality for OFF vs ON comparisons, use a strict
 session ID format:
 
