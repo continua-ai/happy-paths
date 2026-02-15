@@ -28,6 +28,7 @@ type PiRunRecord = {
   rawExitCode: number;
   timedOut: boolean;
   timeoutGuardNormalized: boolean;
+  timeoutSecondsBudget: number;
   repoCheckoutPath: string;
   traceDataDir: string;
   promptPath: string;
@@ -72,6 +73,8 @@ type Manifest = {
     sessionIdPrefix: string;
     onMaxSuggestions: number;
     timeoutSeconds: number;
+    offTimeoutSeconds: number | null;
+    onTimeoutSeconds: number | null;
     prepareRepo: boolean;
     traceStateMode: TraceStateMode;
     seedTraceRoot: string | null;
@@ -105,6 +108,8 @@ function parseArgs(argv: string[]): {
   sessionIdPrefix: string;
   onMaxSuggestions: number;
   timeoutSeconds: number;
+  offTimeoutSeconds: number | null;
+  onTimeoutSeconds: number | null;
   provider: string | null;
   model: string | null;
   thinking: string | null;
@@ -124,6 +129,8 @@ function parseArgs(argv: string[]): {
     sessionIdPrefix: "swebench",
     onMaxSuggestions: 3,
     timeoutSeconds: 180,
+    offTimeoutSeconds: null as number | null,
+    onTimeoutSeconds: null as number | null,
     provider: null as string | null,
     model: null as string | null,
     thinking: null as string | null,
@@ -184,6 +191,16 @@ function parseArgs(argv: string[]): {
     }
     if (token === "--timeout-seconds") {
       options.timeoutSeconds = Math.max(120, parseIntArg(String(value), token));
+      index += 1;
+      continue;
+    }
+    if (token === "--off-timeout-seconds") {
+      options.offTimeoutSeconds = Math.max(120, parseIntArg(String(value), token));
+      index += 1;
+      continue;
+    }
+    if (token === "--on-timeout-seconds") {
+      options.onTimeoutSeconds = Math.max(120, parseIntArg(String(value), token));
       index += 1;
       continue;
     }
@@ -814,6 +831,7 @@ async function runVariant(options: {
     rawExitCode: run.rawExitCode,
     timedOut,
     timeoutGuardNormalized,
+    timeoutSecondsBudget: options.timeoutSeconds,
     repoCheckoutPath: options.repoCheckoutPath,
     traceDataDir: options.traceDataDir,
     promptPath,
@@ -909,8 +927,13 @@ async function main(): Promise<void> {
           variant,
         });
 
+        const timeoutSecondsForVariant =
+          variant === "off"
+            ? (options.offTimeoutSeconds ?? options.timeoutSeconds)
+            : (options.onTimeoutSeconds ?? options.timeoutSeconds);
+
         console.log(
-          `[swebench-pi] running ${task.instanceId} ${variant} r${replicate} (repo=${task.repo}, traceDataDir=${traceDataDir})`,
+          `[swebench-pi] running ${task.instanceId} ${variant} r${replicate} (repo=${task.repo}, traceDataDir=${traceDataDir}, timeoutSec=${timeoutSecondsForVariant})`,
         );
 
         const record = await runVariant({
@@ -926,7 +949,7 @@ async function main(): Promise<void> {
           provider: options.provider,
           model: options.model,
           thinking: options.thinking,
-          timeoutSeconds: options.timeoutSeconds,
+          timeoutSeconds: timeoutSecondsForVariant,
           pruneTraceDataDirToSession:
             options.traceStateMode === "isolated" && seedTraceRoot !== null,
         });
@@ -934,7 +957,7 @@ async function main(): Promise<void> {
         runs.push(record);
 
         console.log(
-          `[swebench-pi] done ${task.instanceId} ${variant} r${replicate} exit=${record.exitCode} rawExit=${record.rawExitCode} timeout=${record.timedOut} timeoutNormalized=${record.timeoutGuardNormalized} durationMs=${record.durationMs}`,
+          `[swebench-pi] done ${task.instanceId} ${variant} r${replicate} exit=${record.exitCode} rawExit=${record.rawExitCode} timeout=${record.timedOut} timeoutNormalized=${record.timeoutGuardNormalized} timeoutBudgetSec=${record.timeoutSecondsBudget} durationMs=${record.durationMs}`,
         );
       }
     }
@@ -1022,6 +1045,8 @@ async function main(): Promise<void> {
       sessionIdPrefix: options.sessionIdPrefix,
       onMaxSuggestions: options.onMaxSuggestions,
       timeoutSeconds: options.timeoutSeconds,
+      offTimeoutSeconds: options.offTimeoutSeconds,
+      onTimeoutSeconds: options.onTimeoutSeconds,
       prepareRepo: options.prepareRepo,
       traceStateMode: options.traceStateMode,
       seedTraceRoot,
