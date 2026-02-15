@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createPiTraceExtension } from "../src/adapters/pi/extension.js";
 import type { PiLikeApi } from "../src/adapters/pi/types.js";
 import { createLocalLearningLoop } from "../src/backends/local/index.js";
+import type { LearningLoop } from "../src/core/learningLoop.js";
 import {
   DEFAULT_PROJECT_IDENTITY,
   resolveProjectIdentity,
@@ -260,5 +261,95 @@ describe("project identity", () => {
     expect(checkpoint?.payload?.artifactHintCount).toBe(0);
     expect(checkpoint?.payload?.retrievalOutcomeFilter).toBe("any");
     expect(Number(checkpoint?.payload?.selfFilteredHintCount ?? 0)).toBe(0);
+  });
+
+  it("keeps one failure warning in top suggestions when available", async () => {
+    const ingestedEvents: Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }> = [];
+
+    const fakeLoop = {
+      async ingest(event: {
+        type: string;
+        payload: Record<string, unknown>;
+      }): Promise<void> {
+        ingestedEvents.push(event);
+      },
+      async suggest(): Promise<
+        Array<{
+          id: string;
+          title: string;
+          rationale: string;
+          confidence: number;
+          evidenceEventIds: string[];
+          playbookMarkdown: string;
+        }>
+      > {
+        return [
+          {
+            id: "retrieval-high",
+            title: "Related prior tool result",
+            rationale: "high confidence retrieval",
+            confidence: 0.95,
+            evidenceEventIds: ["evt-high"],
+            playbookMarkdown: "- Action: high",
+          },
+          {
+            id: "retrieval-mid",
+            title: "Related prior tool result",
+            rationale: "mid confidence retrieval",
+            confidence: 0.8,
+            evidenceEventIds: ["evt-mid"],
+            playbookMarkdown: "- Action: mid",
+          },
+          {
+            id: "retrieval-low",
+            title: "Related prior tool result",
+            rationale: "low confidence retrieval",
+            confidence: 0.7,
+            evidenceEventIds: ["evt-low"],
+            playbookMarkdown: "- Action: low",
+          },
+          {
+            id: "failure-warning",
+            title: "Prior failure warning",
+            rationale: "prior failure",
+            confidence: 0.2,
+            evidenceEventIds: ["evt-failure"],
+            playbookMarkdown: "- Action: verify first",
+          },
+        ];
+      },
+    } as unknown as LearningLoop;
+
+    const fakePi = new FakePiApi();
+    createPiTraceExtension({
+      loop: fakeLoop,
+      sessionId: "session-failure-warning-selection",
+      maxSuggestions: 3,
+    })(fakePi);
+
+    await fakePi.emit("input", {
+      text: "Investigate failure warning selection",
+      source: "interactive",
+    });
+
+    const response = (await fakePi.emit("before_agent_start", {
+      prompt: "Investigate failure warning selection",
+      systemPrompt: "",
+    })) as
+      | {
+          message?: {
+            content?: string;
+          };
+        }
+      | undefined;
+
+    expect(response?.message?.content).toContain("Prior trace hints:");
+
+    const checkpoint = ingestedEvents.find((event) => event.type === "checkpoint");
+    expect(checkpoint?.payload?.failureWarningHintCount).toBe(1);
+    expect(checkpoint?.payload?.availableFailureWarningHintCount).toBe(1);
   });
 });

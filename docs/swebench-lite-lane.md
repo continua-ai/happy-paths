@@ -61,8 +61,9 @@ This helper:
 - checks out each task repo at `base_commit`,
 - hard-resets the checkout before each `off`/`on` run (clean A/B repo state),
 - by default cleans `trace-root` before the run (`--no-clean-trace-root` to disable),
-- supports `--trace-state-mode isolated` (default) so OFF/ON runs do not share
-  mutable trace state,
+- supports `--trace-state-mode isolated` (default) with per-task/per-replicate
+  isolation (OFF/ON share that local trace dir so ON can see OFF evidence, while
+  preventing cross-task contamination),
 - can seed each run from a frozen baseline corpus via `--seed-trace-root <path>`,
 - when seeding isolated runs, keeps only the newly generated session file in each
   run directory (seed traces are used for retrieval warm-start but excluded from
@@ -70,7 +71,8 @@ This helper:
 - runs Pi twice per replicate (`off`, then `on`),
 - captures logs/prompts under `pi_runs/logs/`,
 - writes extension traces under `trace-root`,
-- enforces a minimum timeout of 120s per task-side run (default 180s).
+- enforces a minimum timeout of 120s per task-side run (default 180s),
+- runs a provider/model preflight and fails fast if the requested pair is unavailable.
 
 For stable comparisons, use a fixed-slice protocol (same offset/count/tasks,
 same model/provider, same timeout) and multiple replicates (recommended `r=3`).
@@ -131,6 +133,17 @@ Outputs:
 
 - `evaluationPolicy` (primary lane = `task_paired_trajectory`)
 - `qualityFlags` (including sparse long-horizon pairability flags)
+- `taskPairedValidity` (run-quality coverage + censoring asymmetry checks)
+- `taskPairedTrajectoryQualified` (task-paired deltas on quality-qualified pairs)
+
+By default, the lane evaluates task-paired validity gates:
+
+- `--min-qualified-task-paired-count` (default `3`)
+- `--min-on-checkpoint-coverage` (default `0.8`)
+- `--max-on-vs-off-likely-censored-rate-delta` (default `0.2`)
+
+Use `--no-task-paired-validity-gates` to disable these checks (debug-only).
+With `--strict`, validity gate failures will fail the lane command.
 
 The trace stream also includes `checkpoint` events (`kind=happy_paths_prior_hints`)
 so you can inspect hint counts (including retrieval vs artifact hints),
@@ -169,6 +182,9 @@ Practical rule of thumb:
   from session IDs.
 - Interpret `taskPairedTrajectory` as the primary causal OFF/ON comparison lane,
   especially when long-horizon holdout pair counts are sparse.
+- If `taskPairedValidity.gateResult.pass` is false, treat task-paired deltas as
+  provisional and prefer `taskPairedTrajectoryQualified` for quality-sensitive
+  comparisons.
 - Use long-horizon observed/trajectory lanes as secondary diagnostics until
   pairability is sufficiently powered.
 - Benchmark-agnostic policy: do **not** tune retrieval/hint behavior on specific
