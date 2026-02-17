@@ -38,12 +38,119 @@ export interface PiTraceExtensionOptions {
   agentId?: string;
   sessionId?: string;
   maxSuggestions?: number;
+  suggestionQueryMaxChars?: number;
+  suggestionPlanTimeoutMs?: number;
+  suggestionTotalTimeoutMs?: number;
   customMessageType?: string;
   projectIdentity?: ProjectIdentityOverrides;
 }
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+const DEFAULT_SUGGESTION_QUERY_MAX_CHARS = 4_000;
+const DEFAULT_SUGGESTION_PLAN_TIMEOUT_MS = 1_500;
+const DEFAULT_SUGGESTION_TOTAL_TIMEOUT_MS = 4_000;
+
+type TimedAsyncResult<T> =
+  | {
+      kind: "value";
+      value: T;
+    }
+  | {
+      kind: "error";
+      error: Error;
+    }
+  | {
+      kind: "timeout";
+    };
+
+function normalizeError(error: unknown): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error(String(error));
+}
+
+async function runWithTimeout<T>(
+  run: () => Promise<T>,
+  timeoutMs: number,
+): Promise<TimedAsyncResult<T>> {
+  if (timeoutMs <= 0) {
+    try {
+      return {
+        kind: "value",
+        value: await run(),
+      };
+    } catch (error) {
+      return {
+        kind: "error",
+        error: normalizeError(error),
+      };
+    }
+  }
+
+  let timeoutHandle: NodeJS.Timeout | null = null;
+
+  const timeoutPromise = new Promise<TimedAsyncResult<T>>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      resolve({ kind: "timeout" });
+    }, timeoutMs);
+  });
+
+  const valuePromise = run()
+    .then((value) => {
+      return {
+        kind: "value" as const,
+        value,
+      };
+    })
+    .catch((error: unknown) => {
+      return {
+        kind: "error" as const,
+        error: normalizeError(error),
+      };
+    });
+
+  const settled = await Promise.race([valuePromise, timeoutPromise]);
+
+  if (timeoutHandle) {
+    clearTimeout(timeoutHandle);
+  }
+
+  return settled;
+}
+
+function boundedSuggestionQueryText(options: {
+  prompt: string;
+  maxChars: number;
+}): {
+  text: string;
+  truncated: boolean;
+} {
+  const normalized = options.prompt.replace(/\s+/g, " ").trim();
+  const maxChars = Math.max(512, Math.floor(options.maxChars));
+
+  if (normalized.length <= maxChars) {
+    return {
+      text: normalized,
+      truncated: false,
+    };
+  }
+
+  const separator = " ... ";
+  const headLength = Math.max(300, Math.floor(maxChars * 0.65));
+  const tailLength = Math.max(160, maxChars - headLength - separator.length);
+
+  const head = normalized.slice(0, headLength).trimEnd();
+  const tail = normalized.slice(-tailLength).trimStart();
+
+  return {
+    text: `${head}${separator}${tail}`,
+    truncated: true,
+  };
 }
 
 function extractText(result: PiToolResultEvent): string {
@@ -239,6 +346,24 @@ export function createPiTraceExtension(
   const harness = options.harnessName ?? "pi";
   const agentId = options.agentId;
   const maxSuggestions = options.maxSuggestions ?? 3;
+  const suggestionQueryMaxChars = Math.max(
+    512,
+    Math.floor(
+      options.suggestionQueryMaxChars ?? DEFAULT_SUGGESTION_QUERY_MAX_CHARS,
+    ),
+  );
+  const suggestionPlanTimeoutMs = Math.max(
+    50,
+    Math.floor(
+      options.suggestionPlanTimeoutMs ?? DEFAULT_SUGGESTION_PLAN_TIMEOUT_MS,
+    ),
+  );
+  const suggestionTotalTimeoutMs = Math.max(
+    suggestionPlanTimeoutMs,
+    Math.floor(
+      options.suggestionTotalTimeoutMs ?? DEFAULT_SUGGESTION_TOTAL_TIMEOUT_MS,
+    ),
+  );
   const projectIdentity = resolveProjectIdentity(options.projectIdentity);
   const customMessageType =
     options.customMessageType ?? projectIdentity.extensionCustomType;
@@ -395,6 +520,11 @@ export function createPiTraceExtension(
         return undefined;
       }
 
+      const suggestionQuery = boundedSuggestionQueryText({
+        prompt: event.prompt,
+        maxChars: suggestionQueryMaxChars,
+      });
+
       const swebenchInstanceId = swebenchInstanceIdFromSessionId(sessionId);
       const retrievalPlans = buildSuggestionRetrievalPlans(swebenchInstanceId);
 
@@ -405,17 +535,51 @@ export function createPiTraceExtension(
         fallbackToGlobalToolResults: false,
       };
       let suggestions = [] as Awaited<ReturnType<typeof loop.suggest>>;
+      let retrievalTimedOut = false;
+      let retrievalErrorCount = 0;
+      let retrievalPlansAttempted = 0;
+      const retrievalStartedAtMs = Date.now();
 
       for (const plan of retrievalPlans) {
-        const candidate = await loop.suggest({
-          text: event.prompt,
-          limit: maxSuggestions + 2,
-          filters: plan.filters,
-        });
+        const elapsedMs = Date.now() - retrievalStartedAtMs;
+        const remainingBudgetMs = suggestionTotalTimeoutMs - elapsedMs;
+        if (remainingBudgetMs <= 0) {
+          retrievalTimedOut = true;
+          break;
+        }
+
+        const planTimeoutMs = Math.max(
+          50,
+          Math.min(suggestionPlanTimeoutMs, remainingBudgetMs),
+        );
+
+        retrievalPlansAttempted += 1;
+
+        const candidate = await runWithTimeout(
+          () => {
+            return loop.suggest({
+              text: suggestionQuery.text,
+              limit: maxSuggestions + 2,
+              filters: plan.filters,
+            });
+          },
+          planTimeoutMs,
+        );
 
         selectedPlan = plan;
-        if (candidate.length > 0) {
-          suggestions = candidate;
+
+        if (candidate.kind === "timeout") {
+          retrievalTimedOut = true;
+          break;
+        }
+
+        if (candidate.kind === "error") {
+          retrievalErrorCount += 1;
+          continue;
+        }
+
+        if (candidate.value.length > 0) {
+          suggestions = candidate.value;
           break;
         }
       }
@@ -452,6 +616,11 @@ export function createPiTraceExtension(
           retrievalScope: selectedPlan.retrievalScope,
           retrievalOutcomeFilter: selectedPlan.outcomeFilter,
           fallbackToGlobalToolResults,
+          retrievalPromptTruncated: suggestionQuery.truncated,
+          retrievalQueryTextLength: suggestionQuery.text.length,
+          retrievalPlansAttempted,
+          retrievalTimedOut,
+          retrievalErrorCount,
           hintCount: topSuggestions.length,
           retrievalHintCount,
           failureWarningHintCount,
