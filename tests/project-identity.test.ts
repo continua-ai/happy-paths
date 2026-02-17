@@ -402,9 +402,9 @@ describe("project identity", () => {
 
     const checkpoint = ingestedEvents.find((event) => event.type === "checkpoint");
     expect(checkpoint?.payload?.retrievalPromptTruncated).toBe(true);
-    expect(Number(checkpoint?.payload?.retrievalQueryTextLength ?? 0)).toBeLessThanOrEqual(
-      620,
-    );
+    expect(
+      Number(checkpoint?.payload?.retrievalQueryTextLength ?? 0),
+    ).toBeLessThanOrEqual(620);
   });
 
   it("fails open when retrieval planning exceeds the configured timeout", async () => {

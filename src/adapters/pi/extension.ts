@@ -348,21 +348,15 @@ export function createPiTraceExtension(
   const maxSuggestions = options.maxSuggestions ?? 3;
   const suggestionQueryMaxChars = Math.max(
     512,
-    Math.floor(
-      options.suggestionQueryMaxChars ?? DEFAULT_SUGGESTION_QUERY_MAX_CHARS,
-    ),
+    Math.floor(options.suggestionQueryMaxChars ?? DEFAULT_SUGGESTION_QUERY_MAX_CHARS),
   );
   const suggestionPlanTimeoutMs = Math.max(
     50,
-    Math.floor(
-      options.suggestionPlanTimeoutMs ?? DEFAULT_SUGGESTION_PLAN_TIMEOUT_MS,
-    ),
+    Math.floor(options.suggestionPlanTimeoutMs ?? DEFAULT_SUGGESTION_PLAN_TIMEOUT_MS),
   );
   const suggestionTotalTimeoutMs = Math.max(
     suggestionPlanTimeoutMs,
-    Math.floor(
-      options.suggestionTotalTimeoutMs ?? DEFAULT_SUGGESTION_TOTAL_TIMEOUT_MS,
-    ),
+    Math.floor(options.suggestionTotalTimeoutMs ?? DEFAULT_SUGGESTION_TOTAL_TIMEOUT_MS),
   );
   const projectIdentity = resolveProjectIdentity(options.projectIdentity);
   const customMessageType =
@@ -555,16 +549,13 @@ export function createPiTraceExtension(
 
         retrievalPlansAttempted += 1;
 
-        const candidate = await runWithTimeout(
-          () => {
-            return loop.suggest({
-              text: suggestionQuery.text,
-              limit: maxSuggestions + 2,
-              filters: plan.filters,
-            });
-          },
-          planTimeoutMs,
-        );
+        const candidate = await runWithTimeout(() => {
+          return loop.suggest({
+            text: suggestionQuery.text,
+            limit: maxSuggestions + 2,
+            filters: plan.filters,
+          });
+        }, planTimeoutMs);
 
         selectedPlan = plan;
 
