@@ -352,4 +352,111 @@ describe("project identity", () => {
     expect(checkpoint?.payload?.failureWarningHintCount).toBe(1);
     expect(checkpoint?.payload?.availableFailureWarningHintCount).toBe(1);
   });
+
+  it("bounds retrieval query text for long prompts", async () => {
+    const ingestedEvents: Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }> = [];
+    const seenQueries: string[] = [];
+
+    const fakeLoop = {
+      async ingest(event: {
+        type: string;
+        payload: Record<string, unknown>;
+      }): Promise<void> {
+        ingestedEvents.push(event);
+      },
+      async suggest(query: { text: string }): Promise<
+        Array<{
+          id: string;
+          title: string;
+          rationale: string;
+          confidence: number;
+          evidenceEventIds: string[];
+          playbookMarkdown: string;
+        }>
+      > {
+        seenQueries.push(query.text);
+        return [];
+      },
+    } as unknown as LearningLoop;
+
+    const fakePi = new FakePiApi();
+    createPiTraceExtension({
+      loop: fakeLoop,
+      sessionId: "session-bounded-query",
+      maxSuggestions: 3,
+      suggestionQueryMaxChars: 600,
+    })(fakePi);
+
+    const longPrompt = `${"prefix-token ".repeat(800)}TAIL_CONTEXT_SENTINEL`;
+    await fakePi.emit("before_agent_start", {
+      prompt: longPrompt,
+      systemPrompt: "",
+    });
+
+    expect(seenQueries.length).toBeGreaterThan(0);
+    expect(seenQueries[0]?.length ?? 0).toBeLessThanOrEqual(620);
+    expect(seenQueries[0]).toContain("TAIL_CONTEXT_SENTINEL");
+
+    const checkpoint = ingestedEvents.find((event) => event.type === "checkpoint");
+    expect(checkpoint?.payload?.retrievalPromptTruncated).toBe(true);
+    expect(
+      Number(checkpoint?.payload?.retrievalQueryTextLength ?? 0),
+    ).toBeLessThanOrEqual(620);
+  });
+
+  it("fails open when retrieval planning exceeds the configured timeout", async () => {
+    const ingestedEvents: Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }> = [];
+
+    const fakeLoop = {
+      async ingest(event: {
+        type: string;
+        payload: Record<string, unknown>;
+      }): Promise<void> {
+        ingestedEvents.push(event);
+      },
+      async suggest(): Promise<
+        Array<{
+          id: string;
+          title: string;
+          rationale: string;
+          confidence: number;
+          evidenceEventIds: string[];
+          playbookMarkdown: string;
+        }>
+      > {
+        return await new Promise(() => {
+          // Intentionally unresolved to force retrieval timeout handling.
+        });
+      },
+    } as unknown as LearningLoop;
+
+    const fakePi = new FakePiApi();
+    createPiTraceExtension({
+      loop: fakeLoop,
+      sessionId: "session-retrieval-timeout",
+      maxSuggestions: 3,
+      suggestionPlanTimeoutMs: 10,
+      suggestionTotalTimeoutMs: 20,
+    })(fakePi);
+
+    const startedAtMs = Date.now();
+    const response = await fakePi.emit("before_agent_start", {
+      prompt: "trigger timeout",
+      systemPrompt: "",
+    });
+    const elapsedMs = Date.now() - startedAtMs;
+
+    expect(response).toBeUndefined();
+    expect(elapsedMs).toBeLessThan(500);
+
+    const checkpoint = ingestedEvents.find((event) => event.type === "checkpoint");
+    expect(checkpoint?.payload?.retrievalTimedOut).toBe(true);
+    expect(checkpoint?.payload?.hintCount).toBe(0);
+  });
 });
