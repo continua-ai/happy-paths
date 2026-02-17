@@ -430,19 +430,9 @@ describe("project identity", () => {
           playbookMarkdown: string;
         }>
       > {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 80);
+        return await new Promise(() => {
+          // Intentionally unresolved to force retrieval timeout handling.
         });
-        return [
-          {
-            id: "late-suggestion",
-            title: "Related prior tool result",
-            rationale: "late",
-            confidence: 0.9,
-            evidenceEventIds: ["evt-late"],
-            playbookMarkdown: "- Action: late",
-          },
-        ];
       },
     } as unknown as LearningLoop;
 
