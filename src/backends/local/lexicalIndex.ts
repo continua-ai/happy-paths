@@ -4,16 +4,69 @@ import type { IndexedDocument, SearchQuery, SearchResult } from "../../core/type
 export interface InMemoryLexicalIndexOptions {
   bm25K1?: number;
   bm25B?: number;
+  maxQueryTerms?: number;
 }
 
 const DEFAULT_BM25_K1 = 1.2;
 const DEFAULT_BM25_B = 0.75;
+const DEFAULT_MAX_QUERY_TERMS = 128;
+const QUERY_TERM_HEAD_PORTION = 0.75;
 
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[^a-z0-9_./:-]+/)
     .filter((token) => token.length > 1);
+}
+
+function boundedQueryTerms(terms: string[], maxQueryTerms: number): string[] {
+  if (terms.length <= maxQueryTerms) {
+    return terms;
+  }
+
+  const bounded: string[] = [];
+  const seen = new Set<string>();
+  const headLimit = Math.max(1, Math.floor(maxQueryTerms * QUERY_TERM_HEAD_PORTION));
+  const tailLimit = Math.max(0, maxQueryTerms - headLimit);
+
+  for (const term of terms) {
+    if (bounded.length >= headLimit) {
+      break;
+    }
+
+    if (seen.has(term)) {
+      continue;
+    }
+
+    seen.add(term);
+    bounded.push(term);
+  }
+
+  if (tailLimit <= 0) {
+    return bounded;
+  }
+
+  const tailTerms: string[] = [];
+  for (let index = terms.length - 1; index >= 0; index -= 1) {
+    if (tailTerms.length >= tailLimit) {
+      break;
+    }
+
+    const term = terms[index];
+    if (!term) {
+      continue;
+    }
+
+    if (seen.has(term)) {
+      continue;
+    }
+
+    seen.add(term);
+    tailTerms.push(term);
+  }
+
+  tailTerms.reverse();
+  return [...bounded, ...tailTerms];
 }
 
 function metadataMatches(
@@ -74,10 +127,15 @@ export class InMemoryLexicalIndex implements TraceIndex {
 
   private readonly bm25K1: number;
   private readonly bm25B: number;
+  private readonly maxQueryTerms: number;
 
   constructor(options: InMemoryLexicalIndexOptions = {}) {
     this.bm25K1 = options.bm25K1 ?? DEFAULT_BM25_K1;
     this.bm25B = options.bm25B ?? DEFAULT_BM25_B;
+    this.maxQueryTerms = Math.max(
+      16,
+      Math.floor(options.maxQueryTerms ?? DEFAULT_MAX_QUERY_TERMS),
+    );
   }
 
   async upsert(document: IndexedDocument): Promise<void> {
@@ -98,7 +156,7 @@ export class InMemoryLexicalIndex implements TraceIndex {
 
   async search(query: SearchQuery): Promise<SearchResult[]> {
     const limit = query.limit ?? 10;
-    const queryTerms = tokenize(query.text);
+    const queryTerms = boundedQueryTerms(tokenize(query.text), this.maxQueryTerms);
     if (queryTerms.length === 0 || this.documents.size === 0) {
       return [];
     }

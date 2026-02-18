@@ -98,23 +98,79 @@ function parsePayloadObjectFromDocumentText(
   return null;
 }
 
+const JSON_FIELD_SCAN_MAX_CHARS = 8_000;
+const JSON_FIELD_VALUE_SCAN_MAX_CHARS = 4_000;
+
 function jsonStringFieldFromDocumentText(
   text: string,
   fieldName: string,
 ): string | null {
-  const pattern = new RegExp(`"${fieldName}":"((?:\\\\.|[^\"])+)"`);
-  const match = pattern.exec(text);
-  if (!match?.[1]) {
+  const scannedText =
+    text.length <= JSON_FIELD_SCAN_MAX_CHARS
+      ? text
+      : text.slice(0, JSON_FIELD_SCAN_MAX_CHARS);
+  const fieldPrefix = `"${fieldName}":"`;
+  const fieldStart = scannedText.indexOf(fieldPrefix);
+  if (fieldStart < 0) {
     return null;
   }
 
-  return decodeEscapedWhitespace(decodeJsonString(match[1]));
+  let index = fieldStart + fieldPrefix.length;
+  let escaped = false;
+  let encodedValue = "";
+
+  while (index < scannedText.length) {
+    const character = scannedText[index];
+    if (!character) {
+      break;
+    }
+
+    if (escaped) {
+      encodedValue += character;
+      escaped = false;
+      index += 1;
+      if (encodedValue.length >= JSON_FIELD_VALUE_SCAN_MAX_CHARS) {
+        break;
+      }
+      continue;
+    }
+
+    if (character === "\\") {
+      encodedValue += character;
+      escaped = true;
+      index += 1;
+      if (encodedValue.length >= JSON_FIELD_VALUE_SCAN_MAX_CHARS) {
+        break;
+      }
+      continue;
+    }
+
+    if (character === '"') {
+      break;
+    }
+
+    encodedValue += character;
+    index += 1;
+    if (encodedValue.length >= JSON_FIELD_VALUE_SCAN_MAX_CHARS) {
+      break;
+    }
+  }
+
+  if (!encodedValue) {
+    return null;
+  }
+
+  return decodeEscapedWhitespace(decodeJsonString(encodedValue));
 }
 
 function commandFromDocumentText(text: string): string | null {
   const payload = parsePayloadObjectFromDocumentText(text);
-  if (payload && typeof payload.command === "string") {
-    return decodeEscapedWhitespace(payload.command);
+  if (payload) {
+    if (typeof payload.command === "string") {
+      return decodeEscapedWhitespace(payload.command);
+    }
+
+    return null;
   }
 
   return jsonStringFieldFromDocumentText(text, "command");
@@ -122,9 +178,13 @@ function commandFromDocumentText(text: string): string | null {
 
 function payloadTextFromDocumentText(text: string): string | null {
   const payload = parsePayloadObjectFromDocumentText(text);
-  if (payload && typeof payload.text === "string") {
-    const value = decodeEscapedWhitespace(payload.text);
-    return value || null;
+  if (payload) {
+    if (typeof payload.text === "string") {
+      const value = decodeEscapedWhitespace(payload.text);
+      return value || null;
+    }
+
+    return null;
   }
 
   const value = jsonStringFieldFromDocumentText(text, "text");

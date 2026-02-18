@@ -215,6 +215,44 @@ describe("LearningLoop", () => {
     expect(suggestions[0]?.playbookMarkdown).toContain("Action:");
   });
 
+  it("handles large read payload retrieval docs without hanging", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const largeReadPayload = new Array(700)
+      .fill('path="tests/queries/test_rawsql.py" value="quoted text"')
+      .join("\\n");
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([
+        {
+          document: {
+            id: "doc-read-large",
+            sourceEventId: "event-read-large",
+            text: `tool_result pi ${JSON.stringify({
+              toolName: "read",
+              isError: false,
+              text: largeReadPayload,
+            })}`,
+            metadata: {
+              eventType: "tool_result",
+              toolName: "read",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 1,
+        },
+      ]),
+    });
+
+    const suggestions = await loop.suggest({ text: "quoted text rawsql" });
+
+    expect(suggestions.length).toBeGreaterThan(0);
+    expect(suggestions[0]?.title).toBe("Related prior tool result");
+  });
+
   it("prefers non-error tool results over failure hits", async () => {
     const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
     tempDirs.push(dir);

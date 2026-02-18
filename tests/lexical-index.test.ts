@@ -79,4 +79,28 @@ describe("InMemoryLexicalIndex", () => {
     const first = hits.at(0);
     expect(first?.document.id).toBe("b");
   });
+
+  it("preserves tail tokens when query term count is capped", async () => {
+    const index = new InMemoryLexicalIndex({ maxQueryTerms: 4 });
+
+    await index.upsertMany([
+      {
+        id: "head-noise",
+        sourceEventId: "evt-head",
+        text: "alpha beta gamma",
+      },
+      {
+        id: "tail-target",
+        sourceEventId: "evt-tail",
+        text: "tailneedle uniquefix",
+      },
+    ]);
+
+    const hits = await index.search({
+      text: "alpha beta gamma delta epsilon zeta tailneedle",
+      limit: 5,
+    });
+
+    expect(hits.map((hit) => hit.document.id)).toContain("tail-target");
+  });
 });
