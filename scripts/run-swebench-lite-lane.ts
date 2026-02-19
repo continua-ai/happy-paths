@@ -66,6 +66,8 @@ type PiRunManifest = {
     timedOut: boolean;
     durationMs?: number;
     stderrPath?: string;
+    finalAnswerPath?: string;
+    exitCode?: number;
   }>;
 };
 
@@ -89,6 +91,23 @@ type RunContaminationSummary = {
   contaminatedRunCount: number;
   contaminatedOffRunCount: number;
   contaminatedOnRunCount: number;
+};
+
+type TaskOutcomeSignalSummary = {
+  offRunCount: number;
+  onRunCount: number;
+  offRunsWithReportedFinalStatus: number;
+  onRunsWithReportedFinalStatus: number;
+  offReportedSuccessRuns: number;
+  onReportedSuccessRuns: number;
+  offReportedSuccessRate: number;
+  onReportedSuccessRate: number;
+  reportedSuccessRateDeltaOnMinusOff: number;
+  offExitZeroRuns: number;
+  onExitZeroRuns: number;
+  offExitZeroRate: number;
+  onExitZeroRate: number;
+  exitZeroRateDeltaOnMinusOff: number;
 };
 
 type SessionAggregate = {
@@ -785,6 +804,123 @@ async function buildRunContaminationSummary(options: {
   };
 }
 
+function parseReportedFinalStatus(
+  text: string,
+): "success" | "partial" | "blocked" | null {
+  const match = /FINAL_STATUS:\s*(success|partial|blocked)/i.exec(text);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const normalized = match[1].toLowerCase();
+  if (
+    normalized === "success" ||
+    normalized === "partial" ||
+    normalized === "blocked"
+  ) {
+    return normalized;
+  }
+
+  return null;
+}
+
+async function buildTaskOutcomeSignalSummary(options: {
+  runsManifest: PiRunManifest | null;
+  sessionIdPrefix: string;
+  sessionIdsInScope: Set<string>;
+}): Promise<TaskOutcomeSignalSummary | null> {
+  if (!options.runsManifest?.runs) {
+    return null;
+  }
+
+  let offRunCount = 0;
+  let onRunCount = 0;
+  let offRunsWithReportedFinalStatus = 0;
+  let onRunsWithReportedFinalStatus = 0;
+  let offReportedSuccessRuns = 0;
+  let onReportedSuccessRuns = 0;
+  let offExitZeroRuns = 0;
+  let onExitZeroRuns = 0;
+
+  for (const run of options.runsManifest.runs) {
+    if (!options.sessionIdsInScope.has(run.sessionId)) {
+      continue;
+    }
+
+    const variant = parseRunVariant(run, options.sessionIdPrefix);
+    if (!variant) {
+      continue;
+    }
+
+    if (variant === "off") {
+      offRunCount += 1;
+      if (run.exitCode === 0) {
+        offExitZeroRuns += 1;
+      }
+    } else {
+      onRunCount += 1;
+      if (run.exitCode === 0) {
+        onExitZeroRuns += 1;
+      }
+    }
+
+    if (!run.finalAnswerPath) {
+      continue;
+    }
+
+    let finalAnswer = "";
+    try {
+      finalAnswer = await readFile(run.finalAnswerPath, "utf-8");
+    } catch {
+      continue;
+    }
+
+    const status = parseReportedFinalStatus(finalAnswer);
+    if (!status) {
+      continue;
+    }
+
+    if (variant === "off") {
+      offRunsWithReportedFinalStatus += 1;
+      if (status === "success") {
+        offReportedSuccessRuns += 1;
+      }
+      continue;
+    }
+
+    onRunsWithReportedFinalStatus += 1;
+    if (status === "success") {
+      onReportedSuccessRuns += 1;
+    }
+  }
+
+  if (offRunCount + onRunCount < 1) {
+    return null;
+  }
+
+  const offReportedSuccessRate = rate(offReportedSuccessRuns, offRunCount);
+  const onReportedSuccessRate = rate(onReportedSuccessRuns, onRunCount);
+  const offExitZeroRate = rate(offExitZeroRuns, offRunCount);
+  const onExitZeroRate = rate(onExitZeroRuns, onRunCount);
+
+  return {
+    offRunCount,
+    onRunCount,
+    offRunsWithReportedFinalStatus,
+    onRunsWithReportedFinalStatus,
+    offReportedSuccessRuns,
+    onReportedSuccessRuns,
+    offReportedSuccessRate,
+    onReportedSuccessRate,
+    reportedSuccessRateDeltaOnMinusOff: onReportedSuccessRate - offReportedSuccessRate,
+    offExitZeroRuns,
+    onExitZeroRuns,
+    offExitZeroRate,
+    onExitZeroRate,
+    exitZeroRateDeltaOnMinusOff: onExitZeroRate - offExitZeroRate,
+  };
+}
+
 function isHappyPathsHintCheckpoint(event: TraceEvent): boolean {
   if (event.type !== "checkpoint") {
     return false;
@@ -1284,10 +1420,18 @@ async function main(): Promise<void> {
     sessionIdPrefix: options.sessionIdPrefix,
   });
 
+  const scoredSessionIds = new Set(sessionAggregates.keys());
+
   const runTimeoutSummary = buildRunTimeoutSummary({
     runsManifest,
     sessionIdPrefix: options.sessionIdPrefix,
-    sessionIdsInScope: new Set(sessionAggregates.keys()),
+    sessionIdsInScope: scoredSessionIds,
+  });
+
+  const taskOutcomeSignalSummary = await buildTaskOutcomeSignalSummary({
+    runsManifest,
+    sessionIdPrefix: options.sessionIdPrefix,
+    sessionIdsInScope: scoredSessionIds,
   });
 
   const taskPairedTrajectory = buildTaskPairedTrajectorySummary({
@@ -1399,6 +1543,7 @@ async function main(): Promise<void> {
         runWallTimeSummary.sessionsUsingTraceLatencyFallback,
       contaminatedRunCount: runContaminationSummary.contaminatedRunCount,
       contaminatedSessionCount: runContaminationSummary.contaminatedSessionIds.size,
+      hasTaskOutcomeSignal: taskOutcomeSignalSummary !== null,
       observedLongHorizonPairCount: observedPairCount,
       trajectoryLongHorizonPairCount: trajectoryPairCount,
       longHorizonPairabilitySparse: observedPairCount < 3 || trajectoryPairCount < 3,
@@ -1411,6 +1556,7 @@ async function main(): Promise<void> {
         ...runContaminationSummary.contaminatedSessionIds,
       ].sort(),
     },
+    taskOutcomeSignal: taskOutcomeSignalSummary,
     observed: {
       generatedAtUtc: observedReport.generatedAtUtc,
       pairCount: observedReport.aggregate.totalPairs,
@@ -1493,6 +1639,18 @@ async function main(): Promise<void> {
           contaminatedOnRunCount: runContaminationSummary.contaminatedOnRunCount,
           contaminatedSessionCount: runContaminationSummary.contaminatedSessionIds.size,
         },
+        taskOutcomeSignal: taskOutcomeSignalSummary
+          ? {
+              offReportedSuccessRate: taskOutcomeSignalSummary.offReportedSuccessRate,
+              onReportedSuccessRate: taskOutcomeSignalSummary.onReportedSuccessRate,
+              reportedSuccessRateDeltaOnMinusOff:
+                taskOutcomeSignalSummary.reportedSuccessRateDeltaOnMinusOff,
+              offExitZeroRate: taskOutcomeSignalSummary.offExitZeroRate,
+              onExitZeroRate: taskOutcomeSignalSummary.onExitZeroRate,
+              exitZeroRateDeltaOnMinusOff:
+                taskOutcomeSignalSummary.exitZeroRateDeltaOnMinusOff,
+            }
+          : null,
         taskPairedValidity: {
           enabled: options.enableTaskPairedValidityGates,
           pass: taskPairedValidityGateResult.pass,
