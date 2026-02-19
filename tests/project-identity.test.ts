@@ -353,6 +353,79 @@ describe("project identity", () => {
     expect(checkpoint?.payload?.availableFailureWarningHintCount).toBe(1);
   });
 
+  it("supports artifact-only hint mode", async () => {
+    const ingestedEvents: Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }> = [];
+
+    const fakeLoop = {
+      async ingest(event: {
+        type: string;
+        payload: Record<string, unknown>;
+      }): Promise<void> {
+        ingestedEvents.push(event);
+      },
+      async suggest(): Promise<
+        Array<{
+          id: string;
+          title: string;
+          rationale: string;
+          confidence: number;
+          evidenceEventIds: string[];
+          playbookMarkdown: string;
+        }>
+      > {
+        return [
+          {
+            id: "retrieval-1",
+            title: "Related prior tool result",
+            rationale: "retrieval hint",
+            confidence: 0.95,
+            evidenceEventIds: ["evt-retrieval"],
+            playbookMarkdown: "- Action: retrieval",
+          },
+          {
+            id: "artifact-1",
+            title: "Learned wrong-turn correction",
+            rationale: "artifact hint",
+            confidence: 0.7,
+            evidenceEventIds: ["evt-artifact"],
+            playbookMarkdown: "- Action: artifact",
+          },
+        ];
+      },
+    } as unknown as LearningLoop;
+
+    const fakePi = new FakePiApi();
+    createPiTraceExtension({
+      loop: fakeLoop,
+      sessionId: "session-artifact-only",
+      maxSuggestions: 1,
+      hintMode: "artifact_only",
+    })(fakePi);
+
+    const response = (await fakePi.emit("before_agent_start", {
+      prompt: "investigate artifact-only mode",
+      systemPrompt: "",
+    })) as
+      | {
+          message?: {
+            content?: string;
+          };
+        }
+      | undefined;
+
+    expect(response?.message?.content).toContain("artifact hint");
+    expect(response?.message?.content).not.toContain("retrieval hint");
+
+    const checkpoint = ingestedEvents.find((event) => event.type === "checkpoint");
+    expect(checkpoint?.payload?.hintMode).toBe("artifact_only");
+    expect(checkpoint?.payload?.hintCount).toBe(1);
+    expect(checkpoint?.payload?.retrievalHintCount).toBe(0);
+    expect(checkpoint?.payload?.artifactHintCount).toBe(1);
+  });
+
   it("bounds retrieval query text for long prompts", async () => {
     const ingestedEvents: Array<{
       type: string;

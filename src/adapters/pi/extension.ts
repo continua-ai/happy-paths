@@ -31,6 +31,8 @@ interface SuggestionRetrievalPlan {
   fallbackToGlobalToolResults: boolean;
 }
 
+type HintMode = "all" | "artifact_only";
+
 export interface PiTraceExtensionOptions {
   loop: LearningLoop;
   scope?: TraceScope;
@@ -38,6 +40,7 @@ export interface PiTraceExtensionOptions {
   agentId?: string;
   sessionId?: string;
   maxSuggestions?: number;
+  hintMode?: HintMode;
   suggestionQueryMaxChars?: number;
   suggestionPlanTimeoutMs?: number;
   suggestionTotalTimeoutMs?: number;
@@ -226,6 +229,13 @@ function rankSuggestionsByConfidence(
   });
 }
 
+function isArtifactSuggestion(suggestion: LearningSuggestion): boolean {
+  return (
+    suggestion.id.startsWith("artifact-") ||
+    suggestion.title === "Learned wrong-turn correction"
+  );
+}
+
 function selectTopSuggestions(
   suggestions: LearningSuggestion[],
   maxSuggestions: number,
@@ -346,6 +356,7 @@ export function createPiTraceExtension(
   const harness = options.harnessName ?? "pi";
   const agentId = options.agentId;
   const maxSuggestions = options.maxSuggestions ?? 3;
+  const hintMode = options.hintMode ?? "all";
   const suggestionQueryMaxChars = Math.max(
     512,
     Math.floor(options.suggestionQueryMaxChars ?? DEFAULT_SUGGESTION_QUERY_MAX_CHARS),
@@ -498,6 +509,7 @@ export function createPiTraceExtension(
           type: "checkpoint",
           payload: {
             kind: "happy_paths_prior_hints",
+            hintMode,
             retrievalScope: "disabled",
             retrievalOutcomeFilter: "disabled",
             fallbackToGlobalToolResults: false,
@@ -584,7 +596,13 @@ export function createPiTraceExtension(
         return !suggestion.evidenceEventIds.includes(latestUserInputEventId);
       });
 
-      const topSuggestions = selectTopSuggestions(nonSelfSuggestions, maxSuggestions);
+      const topSuggestions =
+        hintMode === "artifact_only"
+          ? rankSuggestionsByConfidence(nonSelfSuggestions)
+              .filter((suggestion) => isArtifactSuggestion(suggestion))
+              .slice(0, maxSuggestions)
+          : selectTopSuggestions(nonSelfSuggestions, maxSuggestions);
+
       const retrievalHintCount = topSuggestions.filter((suggestion) => {
         return suggestion.id.startsWith("retrieval-");
       }).length;
@@ -604,6 +622,7 @@ export function createPiTraceExtension(
         type: "checkpoint",
         payload: {
           kind: "happy_paths_prior_hints",
+          hintMode,
           retrievalScope: selectedPlan.retrievalScope,
           retrievalOutcomeFilter: selectedPlan.outcomeFilter,
           fallbackToGlobalToolResults,
