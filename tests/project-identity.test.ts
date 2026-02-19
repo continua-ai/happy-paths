@@ -426,6 +426,153 @@ describe("project identity", () => {
     expect(checkpoint?.payload?.artifactHintCount).toBe(1);
   });
 
+  it("abstains when only weak retrieval hints are available", async () => {
+    const ingestedEvents: Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }> = [];
+
+    const fakeLoop = {
+      async ingest(event: {
+        type: string;
+        payload: Record<string, unknown>;
+      }): Promise<void> {
+        ingestedEvents.push(event);
+      },
+      async suggest(): Promise<
+        Array<{
+          id: string;
+          title: string;
+          rationale: string;
+          confidence: number;
+          evidenceEventIds: string[];
+          playbookMarkdown: string;
+        }>
+      > {
+        return [
+          {
+            id: "retrieval-weak",
+            title: "Related prior tool result",
+            rationale: "weak retrieval hint",
+            confidence: 0.45,
+            evidenceEventIds: ["evt-weak"],
+            playbookMarkdown: "- Action: weak",
+          },
+        ];
+      },
+    } as unknown as LearningLoop;
+
+    const fakePi = new FakePiApi();
+    createPiTraceExtension({
+      loop: fakeLoop,
+      sessionId: "session-abstain-weak-retrieval",
+      maxSuggestions: 3,
+    })(fakePi);
+
+    const response = await fakePi.emit("before_agent_start", {
+      prompt: "investigate weak retrieval confidence",
+      systemPrompt: "",
+    });
+
+    expect(response).toBeUndefined();
+
+    const checkpoint = ingestedEvents.find((event) => event.type === "checkpoint");
+    expect(checkpoint?.payload?.hintPolicyVersion).toBe(
+      "v2_artifact_first_confidence_gate",
+    );
+    expect(checkpoint?.payload?.hintCount).toBe(0);
+    expect(checkpoint?.payload?.availableRetrievalHintCount).toBe(1);
+    expect(checkpoint?.payload?.filteredLowConfidenceRetrievalHintCount).toBe(1);
+  });
+
+  it("prioritizes artifact hints and caps retrieval hints", async () => {
+    const ingestedEvents: Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }> = [];
+
+    const fakeLoop = {
+      async ingest(event: {
+        type: string;
+        payload: Record<string, unknown>;
+      }): Promise<void> {
+        ingestedEvents.push(event);
+      },
+      async suggest(): Promise<
+        Array<{
+          id: string;
+          title: string;
+          rationale: string;
+          confidence: number;
+          evidenceEventIds: string[];
+          playbookMarkdown: string;
+        }>
+      > {
+        return [
+          {
+            id: "retrieval-high-1",
+            title: "Related prior tool result",
+            rationale: "retrieval one",
+            confidence: 0.95,
+            evidenceEventIds: ["evt-r1"],
+            playbookMarkdown: "- Action: retrieval one",
+          },
+          {
+            id: "retrieval-high-2",
+            title: "Related prior tool result",
+            rationale: "retrieval two",
+            confidence: 0.9,
+            evidenceEventIds: ["evt-r2"],
+            playbookMarkdown: "- Action: retrieval two",
+          },
+          {
+            id: "retrieval-high-3",
+            title: "Related prior tool result",
+            rationale: "retrieval three",
+            confidence: 0.88,
+            evidenceEventIds: ["evt-r3"],
+            playbookMarkdown: "- Action: retrieval three",
+          },
+          {
+            id: "artifact-strong",
+            title: "Learned wrong-turn correction",
+            rationale: "artifact correction",
+            confidence: 0.8,
+            evidenceEventIds: ["evt-artifact"],
+            playbookMarkdown: "- Action: artifact correction",
+          },
+        ];
+      },
+    } as unknown as LearningLoop;
+
+    const fakePi = new FakePiApi();
+    createPiTraceExtension({
+      loop: fakeLoop,
+      sessionId: "session-artifact-priority",
+      maxSuggestions: 3,
+    })(fakePi);
+
+    const response = (await fakePi.emit("before_agent_start", {
+      prompt: "investigate artifact priority",
+      systemPrompt: "",
+    })) as
+      | {
+          message?: {
+            content?: string;
+          };
+        }
+      | undefined;
+
+    expect(response?.message?.content).toContain("artifact correction");
+
+    const checkpoint = ingestedEvents.find((event) => event.type === "checkpoint");
+    expect(checkpoint?.payload?.artifactHintCount).toBe(1);
+    expect(checkpoint?.payload?.retrievalHintCount).toBe(1);
+    expect(checkpoint?.payload?.hintCount).toBe(2);
+    expect(checkpoint?.payload?.availableRetrievalHintCount).toBe(3);
+    expect(checkpoint?.payload?.policySuppressedByBudgetCount).toBeGreaterThan(0);
+  });
+
   it("bounds retrieval query text for long prompts", async () => {
     const ingestedEvents: Array<{
       type: string;

@@ -801,69 +801,77 @@ export class LearningLoop {
       }
     }
 
-    if (suggestions.length === 0) {
-      const mined = await this.mine(10);
-      const candidateArtifacts = mined
-        .filter((artifact) => hasStrongArtifactSupport(artifact))
-        .map((artifact) => {
-          const supportCount = artifactSupportCount(artifact);
-          const supportSessionCount = artifactSupportSessionCount(artifact);
-          const weightedConfidence = Math.min(
-            0.9,
-            Math.max(
-              0.2,
-              artifact.confidence * (0.7 + artifactSupportWeight(artifact)),
-            ),
-          );
+    const mined = await this.mine(10);
+    const candidateArtifacts = mined
+      .filter((artifact) => hasStrongArtifactSupport(artifact))
+      .map((artifact) => {
+        const supportCount = artifactSupportCount(artifact);
+        const supportSessionCount = artifactSupportSessionCount(artifact);
+        const weightedConfidence = Math.min(
+          0.9,
+          Math.max(0.2, artifact.confidence * (0.7 + artifactSupportWeight(artifact))),
+        );
 
-          return {
-            artifact,
-            supportCount,
-            supportSessionCount,
-            weightedConfidence,
-          };
-        })
-        .sort((left, right) => {
-          if (right.supportSessionCount !== left.supportSessionCount) {
-            return right.supportSessionCount - left.supportSessionCount;
-          }
-          if (right.supportCount !== left.supportCount) {
-            return right.supportCount - left.supportCount;
-          }
-          if (right.weightedConfidence !== left.weightedConfidence) {
-            return right.weightedConfidence - left.weightedConfidence;
-          }
-          return left.artifact.id.localeCompare(right.artifact.id);
-        })
-        .slice(0, MAX_MINED_ARTIFACT_SUGGESTIONS);
+        return {
+          artifact,
+          supportCount,
+          supportSessionCount,
+          weightedConfidence,
+        };
+      })
+      .sort((left, right) => {
+        if (right.supportSessionCount !== left.supportSessionCount) {
+          return right.supportSessionCount - left.supportSessionCount;
+        }
+        if (right.supportCount !== left.supportCount) {
+          return right.supportCount - left.supportCount;
+        }
+        if (right.weightedConfidence !== left.weightedConfidence) {
+          return right.weightedConfidence - left.weightedConfidence;
+        }
+        return left.artifact.id.localeCompare(right.artifact.id);
+      })
+      .slice(0, MAX_MINED_ARTIFACT_SUGGESTIONS);
 
-      for (const candidate of candidateArtifacts) {
-        suggestions.push({
-          id: `artifact-${candidate.artifact.id}`,
-          title: "Learned wrong-turn correction",
-          rationale: `${candidate.artifact.summary} (support: ${candidate.supportSessionCount} session(s), ${candidate.supportCount} occurrence(s)).`,
-          confidence: candidate.weightedConfidence,
-          evidenceEventIds: candidate.artifact.evidenceEventIds,
-          playbookMarkdown: `- Pattern: ${candidate.artifact.summary}\n- Support: ${candidate.supportSessionCount} session(s), ${candidate.supportCount} occurrence(s)\n- Action: ${verifyFirstAction(null)}`,
-        });
-      }
+    const artifactSuggestions = candidateArtifacts.map((candidate) => {
+      return {
+        id: `artifact-${candidate.artifact.id}`,
+        title: "Learned wrong-turn correction",
+        rationale: `${candidate.artifact.summary} (support: ${candidate.supportSessionCount} session(s), ${candidate.supportCount} occurrence(s)).`,
+        confidence: candidate.weightedConfidence,
+        evidenceEventIds: candidate.artifact.evidenceEventIds,
+        playbookMarkdown: `- Pattern: ${candidate.artifact.summary}\n- Support: ${candidate.supportSessionCount} session(s), ${candidate.supportCount} occurrence(s)\n- Action: ${verifyFirstAction(null)}`,
+      } satisfies LearningSuggestion;
+    });
 
-      if (
-        suggestions.length === 0 &&
-        (dedupedRetrieval.length > 0 || mined.length > 0)
-      ) {
-        suggestions.push({
-          id: "retrieval-verify-first-fallback",
-          title: "Verify-first fallback",
-          rationale:
-            "Prior retrieval evidence was weak or low-support. Start with targeted diagnostics before applying broad corrective actions.",
-          confidence: 0.2,
-          evidenceEventIds: [],
-          playbookMarkdown: `- Action: ${verifyFirstAction(
-            null,
-          )}\n- Prefer narrow reproductions and environment checks first.`,
-        });
-      }
+    if (artifactSuggestions.length > 0) {
+      const failureWarnings = suggestions.filter((suggestion) => {
+        return suggestion.title === "Prior failure warning";
+      });
+      const nonFailureWarnings = suggestions.filter((suggestion) => {
+        return suggestion.title !== "Prior failure warning";
+      });
+
+      suggestions.length = 0;
+      suggestions.push(
+        ...failureWarnings,
+        ...artifactSuggestions,
+        ...nonFailureWarnings,
+      );
+    }
+
+    if (suggestions.length === 0 && (dedupedRetrieval.length > 0 || mined.length > 0)) {
+      suggestions.push({
+        id: "retrieval-verify-first-fallback",
+        title: "Verify-first fallback",
+        rationale:
+          "Prior retrieval evidence was weak or low-support. Start with targeted diagnostics before applying broad corrective actions.",
+        confidence: 0.2,
+        evidenceEventIds: [],
+        playbookMarkdown: `- Action: ${verifyFirstAction(
+          null,
+        )}\n- Prefer narrow reproductions and environment checks first.`,
+      });
     }
 
     const dedupedSuggestions: LearningSuggestion[] = [];

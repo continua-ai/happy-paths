@@ -236,45 +236,283 @@ function isArtifactSuggestion(suggestion: LearningSuggestion): boolean {
   );
 }
 
-function selectTopSuggestions(
+const HINT_POLICY_VERSION = "v2_artifact_first_confidence_gate";
+const MIN_ARTIFACT_HINT_CONFIDENCE = 0.45;
+const MIN_FAILURE_WARNING_HINT_CONFIDENCE = 0.2;
+const MIN_RETRIEVAL_HINT_CONFIDENCE = 0.55;
+const MIN_OTHER_HINT_CONFIDENCE = 0.6;
+const MAX_ARTIFACT_HINTS = 1;
+const MAX_RETRIEVAL_HINTS_WITH_ARTIFACT = 1;
+
+type SuggestionKind = "artifact" | "failure_warning" | "retrieval" | "other";
+
+interface HintSelectionDiagnostics {
+  availableHintCount: number;
+  availableArtifactHintCount: number;
+  availableFailureWarningHintCount: number;
+  availableRetrievalHintCount: number;
+  availableOtherHintCount: number;
+  filteredLowConfidenceHintCount: number;
+  filteredLowConfidenceArtifactHintCount: number;
+  filteredLowConfidenceFailureWarningHintCount: number;
+  filteredLowConfidenceRetrievalHintCount: number;
+  filteredLowConfidenceOtherHintCount: number;
+  policySuppressedByBudgetCount: number;
+  selectedArtifactHintCount: number;
+  selectedFailureWarningHintCount: number;
+  selectedRetrievalHintCount: number;
+  selectedOtherHintCount: number;
+}
+
+interface HintSelectionResult {
+  selectedSuggestions: LearningSuggestion[];
+  diagnostics: HintSelectionDiagnostics;
+}
+
+function isFailureWarningSuggestion(suggestion: LearningSuggestion): boolean {
+  return suggestion.title === "Prior failure warning";
+}
+
+function isRetrievalSuggestion(suggestion: LearningSuggestion): boolean {
+  return suggestion.id.startsWith("retrieval-");
+}
+
+function suggestionKind(suggestion: LearningSuggestion): SuggestionKind {
+  if (isArtifactSuggestion(suggestion)) {
+    return "artifact";
+  }
+
+  if (isFailureWarningSuggestion(suggestion)) {
+    return "failure_warning";
+  }
+
+  if (isRetrievalSuggestion(suggestion)) {
+    return "retrieval";
+  }
+
+  return "other";
+}
+
+function minimumConfidenceForSuggestionKind(kind: SuggestionKind): number {
+  if (kind === "artifact") {
+    return MIN_ARTIFACT_HINT_CONFIDENCE;
+  }
+
+  if (kind === "failure_warning") {
+    return MIN_FAILURE_WARNING_HINT_CONFIDENCE;
+  }
+
+  if (kind === "retrieval") {
+    return MIN_RETRIEVAL_HINT_CONFIDENCE;
+  }
+
+  return MIN_OTHER_HINT_CONFIDENCE;
+}
+
+function emptyHintSelectionDiagnostics(): HintSelectionDiagnostics {
+  return {
+    availableHintCount: 0,
+    availableArtifactHintCount: 0,
+    availableFailureWarningHintCount: 0,
+    availableRetrievalHintCount: 0,
+    availableOtherHintCount: 0,
+    filteredLowConfidenceHintCount: 0,
+    filteredLowConfidenceArtifactHintCount: 0,
+    filteredLowConfidenceFailureWarningHintCount: 0,
+    filteredLowConfidenceRetrievalHintCount: 0,
+    filteredLowConfidenceOtherHintCount: 0,
+    policySuppressedByBudgetCount: 0,
+    selectedArtifactHintCount: 0,
+    selectedFailureWarningHintCount: 0,
+    selectedRetrievalHintCount: 0,
+    selectedOtherHintCount: 0,
+  };
+}
+
+function selectArtifactOnlySuggestions(
   suggestions: LearningSuggestion[],
   maxSuggestions: number,
-): LearningSuggestion[] {
+): HintSelectionResult {
+  const diagnostics = emptyHintSelectionDiagnostics();
+  diagnostics.availableHintCount = suggestions.length;
+
+  for (const suggestion of suggestions) {
+    const kind = suggestionKind(suggestion);
+    if (kind === "artifact") {
+      diagnostics.availableArtifactHintCount += 1;
+    } else if (kind === "failure_warning") {
+      diagnostics.availableFailureWarningHintCount += 1;
+    } else if (kind === "retrieval") {
+      diagnostics.availableRetrievalHintCount += 1;
+    } else {
+      diagnostics.availableOtherHintCount += 1;
+    }
+  }
+
   if (maxSuggestions <= 0 || suggestions.length === 0) {
-    return [];
+    return {
+      selectedSuggestions: [],
+      diagnostics,
+    };
   }
 
-  const ranked = rankSuggestionsByConfidence(suggestions);
-  const top = ranked.slice(0, maxSuggestions);
+  const passingArtifacts = rankSuggestionsByConfidence(suggestions).filter(
+    (suggestion) => {
+      if (!isArtifactSuggestion(suggestion)) {
+        return false;
+      }
 
-  if (top.some((suggestion) => suggestion.title === "Prior failure warning")) {
-    return top;
-  }
+      if (suggestion.confidence >= MIN_ARTIFACT_HINT_CONFIDENCE) {
+        return true;
+      }
 
-  const bestFailureWarning = ranked.find((suggestion) => {
-    return suggestion.title === "Prior failure warning";
-  });
+      diagnostics.filteredLowConfidenceHintCount += 1;
+      diagnostics.filteredLowConfidenceArtifactHintCount += 1;
+      return false;
+    },
+  );
 
-  if (!bestFailureWarning) {
-    return top;
-  }
+  const selectedSuggestions = passingArtifacts.slice(0, maxSuggestions);
+  diagnostics.policySuppressedByBudgetCount = Math.max(
+    0,
+    passingArtifacts.length - selectedSuggestions.length,
+  );
+  diagnostics.selectedArtifactHintCount = selectedSuggestions.length;
 
-  const withFailureWarning = [
-    ...top.slice(0, Math.max(0, top.length - 1)),
-    bestFailureWarning,
-  ];
+  return {
+    selectedSuggestions,
+    diagnostics,
+  };
+}
 
-  const deduped: LearningSuggestion[] = [];
-  const seenIds = new Set<string>();
-  for (const suggestion of withFailureWarning) {
-    if (seenIds.has(suggestion.id)) {
+function selectTopSuggestionsWithPolicy(
+  suggestions: LearningSuggestion[],
+  maxSuggestions: number,
+): HintSelectionResult {
+  const diagnostics = emptyHintSelectionDiagnostics();
+  diagnostics.availableHintCount = suggestions.length;
+
+  const candidatesByKind: Record<SuggestionKind, LearningSuggestion[]> = {
+    artifact: [],
+    failure_warning: [],
+    retrieval: [],
+    other: [],
+  };
+
+  for (const suggestion of rankSuggestionsByConfidence(suggestions)) {
+    const kind = suggestionKind(suggestion);
+
+    if (kind === "artifact") {
+      diagnostics.availableArtifactHintCount += 1;
+    } else if (kind === "failure_warning") {
+      diagnostics.availableFailureWarningHintCount += 1;
+    } else if (kind === "retrieval") {
+      diagnostics.availableRetrievalHintCount += 1;
+    } else {
+      diagnostics.availableOtherHintCount += 1;
+    }
+
+    if (suggestion.confidence < minimumConfidenceForSuggestionKind(kind)) {
+      diagnostics.filteredLowConfidenceHintCount += 1;
+      if (kind === "artifact") {
+        diagnostics.filteredLowConfidenceArtifactHintCount += 1;
+      } else if (kind === "failure_warning") {
+        diagnostics.filteredLowConfidenceFailureWarningHintCount += 1;
+      } else if (kind === "retrieval") {
+        diagnostics.filteredLowConfidenceRetrievalHintCount += 1;
+      } else {
+        diagnostics.filteredLowConfidenceOtherHintCount += 1;
+      }
       continue;
     }
-    seenIds.add(suggestion.id);
-    deduped.push(suggestion);
+
+    candidatesByKind[kind].push(suggestion);
   }
 
-  return deduped.slice(0, maxSuggestions);
+  if (maxSuggestions <= 0 || suggestions.length === 0) {
+    return {
+      selectedSuggestions: [],
+      diagnostics,
+    };
+  }
+
+  const selectedSuggestions: LearningSuggestion[] = [];
+  const seenIds = new Set<string>();
+
+  const pushSuggestion = (candidate: LearningSuggestion): void => {
+    if (seenIds.has(candidate.id) || selectedSuggestions.length >= maxSuggestions) {
+      return;
+    }
+
+    selectedSuggestions.push(candidate);
+    seenIds.add(candidate.id);
+  };
+
+  for (const artifact of candidatesByKind.artifact.slice(0, MAX_ARTIFACT_HINTS)) {
+    pushSuggestion(artifact);
+  }
+
+  if (selectedSuggestions.length < maxSuggestions) {
+    const failureWarning = candidatesByKind.failure_warning[0];
+    if (failureWarning) {
+      pushSuggestion(failureWarning);
+    }
+  }
+
+  if (selectedSuggestions.length < maxSuggestions) {
+    const artifactSelected = selectedSuggestions.some((candidate) => {
+      return isArtifactSuggestion(candidate);
+    });
+    const retrievalBudget = artifactSelected
+      ? Math.min(
+          MAX_RETRIEVAL_HINTS_WITH_ARTIFACT,
+          maxSuggestions - selectedSuggestions.length,
+        )
+      : maxSuggestions - selectedSuggestions.length;
+
+    for (const retrieval of candidatesByKind.retrieval.slice(0, retrievalBudget)) {
+      pushSuggestion(retrieval);
+    }
+  }
+
+  if (selectedSuggestions.length < maxSuggestions) {
+    for (const other of candidatesByKind.other) {
+      pushSuggestion(other);
+      if (selectedSuggestions.length >= maxSuggestions) {
+        break;
+      }
+    }
+  }
+
+  diagnostics.selectedArtifactHintCount = selectedSuggestions.filter((suggestion) => {
+    return isArtifactSuggestion(suggestion);
+  }).length;
+  diagnostics.selectedFailureWarningHintCount = selectedSuggestions.filter(
+    (suggestion) => {
+      return isFailureWarningSuggestion(suggestion);
+    },
+  ).length;
+  diagnostics.selectedRetrievalHintCount = selectedSuggestions.filter((suggestion) => {
+    return isRetrievalSuggestion(suggestion);
+  }).length;
+  diagnostics.selectedOtherHintCount = selectedSuggestions.filter((suggestion) => {
+    return suggestionKind(suggestion) === "other";
+  }).length;
+
+  const totalPassingCandidates =
+    candidatesByKind.artifact.length +
+    candidatesByKind.failure_warning.length +
+    candidatesByKind.retrieval.length +
+    candidatesByKind.other.length;
+  diagnostics.policySuppressedByBudgetCount = Math.max(
+    0,
+    totalPassingCandidates - selectedSuggestions.length,
+  );
+
+  return {
+    selectedSuggestions,
+    diagnostics,
+  };
 }
 
 function buildSuggestionRetrievalPlans(
@@ -510,6 +748,11 @@ export function createPiTraceExtension(
           payload: {
             kind: "happy_paths_prior_hints",
             hintMode,
+            hintPolicyVersion: HINT_POLICY_VERSION,
+            minArtifactHintConfidence: MIN_ARTIFACT_HINT_CONFIDENCE,
+            minFailureWarningHintConfidence: MIN_FAILURE_WARNING_HINT_CONFIDENCE,
+            minRetrievalHintConfidence: MIN_RETRIEVAL_HINT_CONFIDENCE,
+            minOtherHintConfidence: MIN_OTHER_HINT_CONFIDENCE,
             retrievalScope: "disabled",
             retrievalOutcomeFilter: "disabled",
             fallbackToGlobalToolResults: false,
@@ -517,6 +760,21 @@ export function createPiTraceExtension(
             retrievalHintCount: 0,
             failureWarningHintCount: 0,
             artifactHintCount: 0,
+            availableHintCount: 0,
+            availableFailureWarningHintCount: 0,
+            availableArtifactHintCount: 0,
+            availableRetrievalHintCount: 0,
+            availableOtherHintCount: 0,
+            filteredLowConfidenceHintCount: 0,
+            filteredLowConfidenceArtifactHintCount: 0,
+            filteredLowConfidenceFailureWarningHintCount: 0,
+            filteredLowConfidenceRetrievalHintCount: 0,
+            filteredLowConfidenceOtherHintCount: 0,
+            policySuppressedByBudgetCount: 0,
+            selectedArtifactHintCount: 0,
+            selectedFailureWarningHintCount: 0,
+            selectedRetrievalHintCount: 0,
+            selectedOtherHintCount: 0,
             selfFilteredHintCount: 0,
             hintIds: [],
             hintTitles: [],
@@ -596,12 +854,11 @@ export function createPiTraceExtension(
         return !suggestion.evidenceEventIds.includes(latestUserInputEventId);
       });
 
-      const topSuggestions =
+      const selection =
         hintMode === "artifact_only"
-          ? rankSuggestionsByConfidence(nonSelfSuggestions)
-              .filter((suggestion) => isArtifactSuggestion(suggestion))
-              .slice(0, maxSuggestions)
-          : selectTopSuggestions(nonSelfSuggestions, maxSuggestions);
+          ? selectArtifactOnlySuggestions(nonSelfSuggestions, maxSuggestions)
+          : selectTopSuggestionsWithPolicy(nonSelfSuggestions, maxSuggestions);
+      const topSuggestions = selection.selectedSuggestions;
 
       const retrievalHintCount = topSuggestions.filter((suggestion) => {
         return suggestion.id.startsWith("retrieval-");
@@ -612,17 +869,17 @@ export function createPiTraceExtension(
       const artifactHintCount = topSuggestions.filter((suggestion) => {
         return suggestion.id.startsWith("artifact-");
       }).length;
-      const availableFailureWarningHintCount = nonSelfSuggestions.filter(
-        (suggestion) => {
-          return suggestion.title === "Prior failure warning";
-        },
-      ).length;
 
       await ingest({
         type: "checkpoint",
         payload: {
           kind: "happy_paths_prior_hints",
           hintMode,
+          hintPolicyVersion: HINT_POLICY_VERSION,
+          minArtifactHintConfidence: MIN_ARTIFACT_HINT_CONFIDENCE,
+          minFailureWarningHintConfidence: MIN_FAILURE_WARNING_HINT_CONFIDENCE,
+          minRetrievalHintConfidence: MIN_RETRIEVAL_HINT_CONFIDENCE,
+          minOtherHintConfidence: MIN_OTHER_HINT_CONFIDENCE,
           retrievalScope: selectedPlan.retrievalScope,
           retrievalOutcomeFilter: selectedPlan.outcomeFilter,
           fallbackToGlobalToolResults,
@@ -634,8 +891,31 @@ export function createPiTraceExtension(
           hintCount: topSuggestions.length,
           retrievalHintCount,
           failureWarningHintCount,
-          availableFailureWarningHintCount,
           artifactHintCount,
+          availableHintCount: selection.diagnostics.availableHintCount,
+          availableFailureWarningHintCount:
+            selection.diagnostics.availableFailureWarningHintCount,
+          availableArtifactHintCount: selection.diagnostics.availableArtifactHintCount,
+          availableRetrievalHintCount:
+            selection.diagnostics.availableRetrievalHintCount,
+          availableOtherHintCount: selection.diagnostics.availableOtherHintCount,
+          filteredLowConfidenceHintCount:
+            selection.diagnostics.filteredLowConfidenceHintCount,
+          filteredLowConfidenceArtifactHintCount:
+            selection.diagnostics.filteredLowConfidenceArtifactHintCount,
+          filteredLowConfidenceFailureWarningHintCount:
+            selection.diagnostics.filteredLowConfidenceFailureWarningHintCount,
+          filteredLowConfidenceRetrievalHintCount:
+            selection.diagnostics.filteredLowConfidenceRetrievalHintCount,
+          filteredLowConfidenceOtherHintCount:
+            selection.diagnostics.filteredLowConfidenceOtherHintCount,
+          policySuppressedByBudgetCount:
+            selection.diagnostics.policySuppressedByBudgetCount,
+          selectedArtifactHintCount: selection.diagnostics.selectedArtifactHintCount,
+          selectedFailureWarningHintCount:
+            selection.diagnostics.selectedFailureWarningHintCount,
+          selectedRetrievalHintCount: selection.diagnostics.selectedRetrievalHintCount,
+          selectedOtherHintCount: selection.diagnostics.selectedOtherHintCount,
           selfFilteredHintCount: Math.max(
             0,
             suggestions.length - nonSelfSuggestions.length,
