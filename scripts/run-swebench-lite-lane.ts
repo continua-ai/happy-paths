@@ -64,6 +64,8 @@ type PiRunManifest = {
     sessionId: string;
     variant?: "off" | "on";
     timedOut: boolean;
+    durationMs?: number;
+    stderrPath?: string;
   }>;
 };
 
@@ -73,6 +75,20 @@ type RunTimeoutSummary = {
   offTimeoutRate: number;
   onTimeoutRate: number;
   timeoutRateDeltaOnMinusOff: number;
+};
+
+type RunWallTimeSummary = {
+  source: "runs_manifest_durationMs" | "trace_turn_latency";
+  sessionsUsingManifestDuration: number;
+  sessionsUsingTraceLatencyFallback: number;
+  sessionDurationMsById: Map<string, number>;
+};
+
+type RunContaminationSummary = {
+  contaminatedSessionIds: Set<string>;
+  contaminatedRunCount: number;
+  contaminatedOffRunCount: number;
+  contaminatedOnRunCount: number;
 };
 
 type SessionAggregate = {
@@ -85,6 +101,7 @@ type SessionAggregate = {
   totalFailures: number;
   harmfulFailures: number;
   wallTimeMs: number;
+  llmTurnLatencyMs: number;
   tokenCount: number;
 };
 
@@ -642,6 +659,132 @@ function rate(numerator: number, denominator: number): number {
   return numerator / denominator;
 }
 
+const RUN_CONTAMINATION_STDERR_PATTERNS: RegExp[] = [
+  /chatgpt usage limit/i,
+  /usage limit/i,
+  /rate limit/i,
+  /too many requests/i,
+  /unauthorized/i,
+  /authentication error/i,
+  /invalid api key/i,
+  /model preflight failed/i,
+];
+
+function parseRunVariant(
+  run: PiRunManifest["runs"][number],
+  sessionIdPrefix: string,
+): "off" | "on" | null {
+  if (run.variant === "off" || run.variant === "on") {
+    return run.variant;
+  }
+
+  const identity = parseSweBenchSessionId(run.sessionId, sessionIdPrefix);
+  return identity?.variant ?? null;
+}
+
+function buildRunWallTimeSummary(options: {
+  runsManifest: PiRunManifest | null;
+  sessionIdsInScope: Set<string>;
+}): RunWallTimeSummary {
+  const sessionDurationMsById = new Map<string, number>();
+
+  if (options.runsManifest?.runs) {
+    for (const run of options.runsManifest.runs) {
+      if (!options.sessionIdsInScope.has(run.sessionId)) {
+        continue;
+      }
+
+      const durationMs = toFiniteNumber(run.durationMs);
+      if (durationMs <= 0) {
+        continue;
+      }
+
+      sessionDurationMsById.set(run.sessionId, durationMs);
+    }
+  }
+
+  const sessionsUsingManifestDuration = sessionDurationMsById.size;
+  const sessionsUsingTraceLatencyFallback = Math.max(
+    0,
+    options.sessionIdsInScope.size - sessionsUsingManifestDuration,
+  );
+
+  return {
+    source:
+      sessionsUsingManifestDuration > 0
+        ? "runs_manifest_durationMs"
+        : "trace_turn_latency",
+    sessionsUsingManifestDuration,
+    sessionsUsingTraceLatencyFallback,
+    sessionDurationMsById,
+  };
+}
+
+function isContaminatedRunStderr(stderrText: string): boolean {
+  return RUN_CONTAMINATION_STDERR_PATTERNS.some((pattern) => {
+    return pattern.test(stderrText);
+  });
+}
+
+async function buildRunContaminationSummary(options: {
+  runsManifest: PiRunManifest | null;
+  sessionIdPrefix: string;
+  sessionIdsInScope: Set<string>;
+}): Promise<RunContaminationSummary> {
+  const contaminatedSessionIds = new Set<string>();
+  let contaminatedRunCount = 0;
+  let contaminatedOffRunCount = 0;
+  let contaminatedOnRunCount = 0;
+
+  if (!options.runsManifest?.runs) {
+    return {
+      contaminatedSessionIds,
+      contaminatedRunCount,
+      contaminatedOffRunCount,
+      contaminatedOnRunCount,
+    };
+  }
+
+  for (const run of options.runsManifest.runs) {
+    if (!options.sessionIdsInScope.has(run.sessionId)) {
+      continue;
+    }
+
+    if (!run.stderrPath) {
+      continue;
+    }
+
+    let stderrText = "";
+    try {
+      stderrText = await readFile(run.stderrPath, "utf-8");
+    } catch {
+      continue;
+    }
+
+    if (!isContaminatedRunStderr(stderrText)) {
+      continue;
+    }
+
+    contaminatedRunCount += 1;
+    contaminatedSessionIds.add(run.sessionId);
+
+    const variant = parseRunVariant(run, options.sessionIdPrefix);
+    if (variant === "off") {
+      contaminatedOffRunCount += 1;
+    }
+    if (variant === "on") {
+      contaminatedOnRunCount += 1;
+    }
+  }
+
+  return {
+    contaminatedSessionIds,
+    contaminatedRunCount,
+    contaminatedOffRunCount,
+    contaminatedOnRunCount,
+  };
+}
+
 function isHappyPathsHintCheckpoint(event: TraceEvent): boolean {
   if (event.type !== "checkpoint") {
     return false;
@@ -650,15 +793,16 @@ function isHappyPathsHintCheckpoint(event: TraceEvent): boolean {
   return event.payload?.kind === "happy_paths_prior_hints";
 }
 
-function summarizeSessions(
-  sessionsById: Map<string, TraceEvent[]>,
-): Map<string, SessionAggregate> {
+function summarizeSessions(options: {
+  sessionsById: Map<string, TraceEvent[]>;
+  runWallTimeSummary: RunWallTimeSummary;
+}): Map<string, SessionAggregate> {
   const output = new Map<string, SessionAggregate>();
 
-  for (const [sessionId, events] of sessionsById.entries()) {
+  for (const [sessionId, events] of options.sessionsById.entries()) {
     let totalFailures = 0;
     let harmfulFailures = 0;
-    let wallTimeMs = 0;
+    let llmTurnLatencyMs = 0;
     let tokenCount = 0;
     let toolResultCount = 0;
     let checkpointCount = 0;
@@ -666,7 +810,7 @@ function summarizeSessions(
     let failureWarningHintCount = 0;
 
     for (const event of events) {
-      wallTimeMs += event.metrics?.latencyMs ?? 0;
+      llmTurnLatencyMs += event.metrics?.latencyMs ?? 0;
       tokenCount += eventTokenCount(event);
 
       if (event.type === "tool_result") {
@@ -692,6 +836,10 @@ function summarizeSessions(
       }
     }
 
+    const wallTimeMs =
+      options.runWallTimeSummary.sessionDurationMsById.get(sessionId) ??
+      llmTurnLatencyMs;
+
     output.set(sessionId, {
       sessionId,
       eventCount: events.length,
@@ -702,6 +850,7 @@ function summarizeSessions(
       totalFailures,
       harmfulFailures,
       wallTimeMs,
+      llmTurnLatencyMs,
       tokenCount,
     });
   }
@@ -766,13 +915,7 @@ function buildRunTimeoutSummary(options: {
       continue;
     }
 
-    let variant: "off" | "on" | null = null;
-    if (run.variant === "off" || run.variant === "on") {
-      variant = run.variant;
-    } else {
-      const identity = parseSweBenchSessionId(run.sessionId, options.sessionIdPrefix);
-      variant = identity?.variant ?? null;
-    }
+    const variant = parseRunVariant(run, options.sessionIdPrefix);
 
     if (!variant) {
       continue;
@@ -1113,11 +1256,34 @@ async function main(): Promise<void> {
     : null;
 
   const sessionData = await loadSessions(scoringTraceRootPath);
-  const sessionAggregates = summarizeSessions(sessionData.sessionsById);
+  const sessionIdsInScope = new Set(sessionData.sessionsById.keys());
+  const runWallTimeSummary = buildRunWallTimeSummary({
+    runsManifest,
+    sessionIdsInScope,
+  });
+
+  const allSessionAggregates = summarizeSessions({
+    sessionsById: sessionData.sessionsById,
+    runWallTimeSummary,
+  });
+
+  const runContaminationSummary = await buildRunContaminationSummary({
+    runsManifest,
+    sessionIdPrefix: options.sessionIdPrefix,
+    sessionIdsInScope,
+  });
+
+  const sessionAggregates = new Map(
+    [...allSessionAggregates.entries()].filter(([sessionId]) => {
+      return !runContaminationSummary.contaminatedSessionIds.has(sessionId);
+    }),
+  );
+
   const pairingFromAggregates = buildSweBenchPairingFromAggregates({
     sessionAggregates,
     sessionIdPrefix: options.sessionIdPrefix,
   });
+
   const runTimeoutSummary = buildRunTimeoutSummary({
     runsManifest,
     sessionIdPrefix: options.sessionIdPrefix,
@@ -1173,6 +1339,12 @@ async function main(): Promise<void> {
     );
   }
 
+  if (options.strict && runContaminationSummary.contaminatedRunCount > 0) {
+    throw new Error(
+      `run contamination detected (${runContaminationSummary.contaminatedRunCount} run(s)); rerun contaminated sessions before strict scoring`,
+    );
+  }
+
   if (
     options.strict &&
     options.enableTaskPairedValidityGates &&
@@ -1221,9 +1393,23 @@ async function main(): Promise<void> {
       taskPairedValidityGatesEnabled: options.enableTaskPairedValidityGates,
       taskPairedValidityGatePass: taskPairedValidityGateResult.pass,
       hasRunTimeoutSummary: runTimeoutSummary !== null,
+      wallTimeSource: runWallTimeSummary.source,
+      sessionsUsingManifestDuration: runWallTimeSummary.sessionsUsingManifestDuration,
+      sessionsUsingTraceLatencyFallback:
+        runWallTimeSummary.sessionsUsingTraceLatencyFallback,
+      contaminatedRunCount: runContaminationSummary.contaminatedRunCount,
+      contaminatedSessionCount: runContaminationSummary.contaminatedSessionIds.size,
       observedLongHorizonPairCount: observedPairCount,
       trajectoryLongHorizonPairCount: trajectoryPairCount,
       longHorizonPairabilitySparse: observedPairCount < 3 || trajectoryPairCount < 3,
+    },
+    contamination: {
+      contaminatedRunCount: runContaminationSummary.contaminatedRunCount,
+      contaminatedOffRunCount: runContaminationSummary.contaminatedOffRunCount,
+      contaminatedOnRunCount: runContaminationSummary.contaminatedOnRunCount,
+      contaminatedSessionIds: [
+        ...runContaminationSummary.contaminatedSessionIds,
+      ].sort(),
     },
     observed: {
       generatedAtUtc: observedReport.generatedAtUtc,
@@ -1274,6 +1460,12 @@ async function main(): Promise<void> {
     );
   }
 
+  if (runContaminationSummary.contaminatedRunCount > 0) {
+    console.log(
+      `NOTE: excluded ${runContaminationSummary.contaminatedRunCount} contaminated run(s) from task-paired scoring.`,
+    );
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -1287,6 +1479,19 @@ async function main(): Promise<void> {
             observedPairCount < 3 || trajectoryPairCount < 3,
           observedLongHorizonPairCount: observedPairCount,
           trajectoryLongHorizonPairCount: trajectoryPairCount,
+        },
+        measurement: {
+          wallTimeSource: runWallTimeSummary.source,
+          sessionsUsingManifestDuration:
+            runWallTimeSummary.sessionsUsingManifestDuration,
+          sessionsUsingTraceLatencyFallback:
+            runWallTimeSummary.sessionsUsingTraceLatencyFallback,
+        },
+        contamination: {
+          contaminatedRunCount: runContaminationSummary.contaminatedRunCount,
+          contaminatedOffRunCount: runContaminationSummary.contaminatedOffRunCount,
+          contaminatedOnRunCount: runContaminationSummary.contaminatedOnRunCount,
+          contaminatedSessionCount: runContaminationSummary.contaminatedSessionIds.size,
         },
         taskPairedValidity: {
           enabled: options.enableTaskPairedValidityGates,
