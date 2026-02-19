@@ -71,10 +71,19 @@ function sessionIdFromEnv(): string | undefined {
   return raw;
 }
 
+function hintModeFromEnv(): "all" | "artifact_only" {
+  const raw = (process.env.HAPPY_PATHS_HINT_MODE ?? "").trim().toLowerCase();
+  if (raw === "artifact_only") {
+    return "artifact_only";
+  }
+  return "all";
+}
+
 export default function happyPathsPiExtension(pi: PiLikeApi): void {
   const traceRoot = traceRootFromEnv();
   const scope = scopeFromEnv();
   const maxSuggestions = maxSuggestionsFromEnv();
+  const hintMode = hintModeFromEnv();
   const sessionId = sessionIdFromEnv();
 
   const loop = createLocalLearningLoop({ dataDir: traceRoot });
@@ -103,5 +112,6 @@ export default function happyPathsPiExtension(pi: PiLikeApi): void {
     scope,
     sessionId,
     maxSuggestions,
+    hintMode,
   })(pi);
 }
