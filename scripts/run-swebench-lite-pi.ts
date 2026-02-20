@@ -13,6 +13,7 @@ import {
 
 type RunVariant = "off" | "on";
 type TraceStateMode = "shared" | "isolated";
+type HintMode = "full" | "artifact_only" | "none";
 
 type PiRunRecord = {
   instanceId: string;
@@ -72,6 +73,7 @@ type Manifest = {
   options: {
     sessionIdPrefix: string;
     onMaxSuggestions: number;
+    onHintMode: HintMode | null;
     timeoutSeconds: number;
     offTimeoutSeconds: number | null;
     onTimeoutSeconds: number | null;
@@ -107,6 +109,7 @@ function parseArgs(argv: string[]): {
   replicates: number;
   sessionIdPrefix: string;
   onMaxSuggestions: number;
+  onHintMode: HintMode | null;
   timeoutSeconds: number;
   offTimeoutSeconds: number | null;
   onTimeoutSeconds: number | null;
@@ -128,6 +131,7 @@ function parseArgs(argv: string[]): {
     replicates: 1,
     sessionIdPrefix: "swebench",
     onMaxSuggestions: 3,
+    onHintMode: null as HintMode | null,
     timeoutSeconds: 180,
     offTimeoutSeconds: null as number | null,
     onTimeoutSeconds: null as number | null,
@@ -186,6 +190,19 @@ function parseArgs(argv: string[]): {
     }
     if (token === "--on-max-suggestions") {
       options.onMaxSuggestions = Math.max(0, parseIntArg(String(value), token));
+      index += 1;
+      continue;
+    }
+    if (token === "--on-hint-mode") {
+      const onHintMode = String(value);
+      if (
+        onHintMode !== "full" &&
+        onHintMode !== "artifact_only" &&
+        onHintMode !== "none"
+      ) {
+        throw new Error(`invalid --on-hint-mode: ${onHintMode}`);
+      }
+      options.onHintMode = onHintMode;
       index += 1;
       continue;
     }
@@ -742,6 +759,7 @@ async function runVariant(options: {
   replicate: number;
   sessionIdPrefix: string;
   onMaxSuggestions: number;
+  onHintMode: HintMode | null;
   traceDataDir: string;
   extensionPath: string;
   repoCheckoutPath: string;
@@ -779,6 +797,12 @@ async function runVariant(options: {
     HAPPY_PATHS_SWEBENCH_VARIANT: options.variant,
     HAPPY_PATHS_SWEBENCH_REPLICATE: `r${options.replicate}`,
   };
+
+  if (options.variant === "off") {
+    env.HAPPY_PATHS_HINT_MODE = "none";
+  } else if (options.onHintMode !== null) {
+    env.HAPPY_PATHS_HINT_MODE = options.onHintMode;
+  }
 
   const args = buildPiArgs({
     extensionPath: options.extensionPath,
@@ -942,6 +966,7 @@ async function main(): Promise<void> {
           replicate,
           sessionIdPrefix: options.sessionIdPrefix,
           onMaxSuggestions: options.onMaxSuggestions,
+          onHintMode: options.onHintMode,
           traceDataDir,
           extensionPath,
           repoCheckoutPath,
@@ -1044,6 +1069,7 @@ async function main(): Promise<void> {
     options: {
       sessionIdPrefix: options.sessionIdPrefix,
       onMaxSuggestions: options.onMaxSuggestions,
+      onHintMode: options.onHintMode,
       timeoutSeconds: options.timeoutSeconds,
       offTimeoutSeconds: options.offTimeoutSeconds,
       onTimeoutSeconds: options.onTimeoutSeconds,

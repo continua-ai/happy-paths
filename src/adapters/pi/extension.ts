@@ -35,6 +35,7 @@ type HintMode = "all" | "artifact_only";
 
 export interface PiTraceExtensionOptions {
   loop: LearningLoop;
+  retrievalLoop?: LearningLoop;
   scope?: TraceScope;
   harnessName?: string;
   agentId?: string;
@@ -236,13 +237,16 @@ function isArtifactSuggestion(suggestion: LearningSuggestion): boolean {
   );
 }
 
-const HINT_POLICY_VERSION = "v2_artifact_first_confidence_gate";
+const HINT_POLICY_VERSION = "v3_frozen_single_hint_utility";
 const MIN_ARTIFACT_HINT_CONFIDENCE = 0.45;
 const MIN_FAILURE_WARNING_HINT_CONFIDENCE = 0.2;
 const MIN_RETRIEVAL_HINT_CONFIDENCE = 0.55;
 const MIN_OTHER_HINT_CONFIDENCE = 0.6;
-const MAX_ARTIFACT_HINTS = 1;
-const MAX_RETRIEVAL_HINTS_WITH_ARTIFACT = 1;
+const MAX_HINTS_PER_TURN = 1;
+const RETRIEVAL_WITH_ARTIFACT_OVERRIDE_CONFIDENCE = 0.92;
+const MIN_SELECTED_HINT_UTILITY_SCORE = 0.15;
+const TIMEOUT_RISK_WEIGHT = 0.65;
+const TOKEN_RISK_WEIGHT = 0.35;
 
 type SuggestionKind = "artifact" | "failure_warning" | "retrieval" | "other";
 
@@ -257,16 +261,28 @@ interface HintSelectionDiagnostics {
   filteredLowConfidenceFailureWarningHintCount: number;
   filteredLowConfidenceRetrievalHintCount: number;
   filteredLowConfidenceOtherHintCount: number;
+  filteredLowUtilityHintCount: number;
   policySuppressedByBudgetCount: number;
+  policySuppressedByArtifactPriorityCount: number;
   selectedArtifactHintCount: number;
   selectedFailureWarningHintCount: number;
   selectedRetrievalHintCount: number;
   selectedOtherHintCount: number;
+  selectedHintKind: SuggestionKind | null;
+  selectedHintUtilityScore: number | null;
+  selectionBudgetRaw: number;
+  selectionBudgetApplied: number;
 }
 
 interface HintSelectionResult {
   selectedSuggestions: LearningSuggestion[];
   diagnostics: HintSelectionDiagnostics;
+}
+
+interface ScoredSuggestionCandidate {
+  suggestion: LearningSuggestion;
+  kind: SuggestionKind;
+  utilityScore: number;
 }
 
 function isFailureWarningSuggestion(suggestion: LearningSuggestion): boolean {
@@ -309,6 +325,51 @@ function minimumConfidenceForSuggestionKind(kind: SuggestionKind): number {
   return MIN_OTHER_HINT_CONFIDENCE;
 }
 
+function timeoutRiskBySuggestionKind(kind: SuggestionKind): number {
+  if (kind === "artifact") {
+    return 0.08;
+  }
+
+  if (kind === "failure_warning") {
+    return 0.14;
+  }
+
+  if (kind === "retrieval") {
+    return 0.28;
+  }
+
+  return 0.2;
+}
+
+function tokenRiskBySuggestionKind(kind: SuggestionKind): number {
+  if (kind === "artifact") {
+    return 0.04;
+  }
+
+  if (kind === "failure_warning") {
+    return 0.06;
+  }
+
+  if (kind === "retrieval") {
+    return 0.14;
+  }
+
+  return 0.1;
+}
+
+function utilityScoreForSuggestion(
+  suggestion: LearningSuggestion,
+  kind: SuggestionKind,
+): number {
+  const timeoutRisk = timeoutRiskBySuggestionKind(kind);
+  const tokenRisk = tokenRiskBySuggestionKind(kind);
+  return (
+    suggestion.confidence -
+    timeoutRisk * TIMEOUT_RISK_WEIGHT -
+    tokenRisk * TOKEN_RISK_WEIGHT
+  );
+}
+
 function emptyHintSelectionDiagnostics(): HintSelectionDiagnostics {
   return {
     availableHintCount: 0,
@@ -321,12 +382,130 @@ function emptyHintSelectionDiagnostics(): HintSelectionDiagnostics {
     filteredLowConfidenceFailureWarningHintCount: 0,
     filteredLowConfidenceRetrievalHintCount: 0,
     filteredLowConfidenceOtherHintCount: 0,
+    filteredLowUtilityHintCount: 0,
     policySuppressedByBudgetCount: 0,
+    policySuppressedByArtifactPriorityCount: 0,
     selectedArtifactHintCount: 0,
     selectedFailureWarningHintCount: 0,
     selectedRetrievalHintCount: 0,
     selectedOtherHintCount: 0,
+    selectedHintKind: null,
+    selectedHintUtilityScore: null,
+    selectionBudgetRaw: 0,
+    selectionBudgetApplied: 0,
   };
+}
+
+function incrementAvailableCountForKind(
+  diagnostics: HintSelectionDiagnostics,
+  kind: SuggestionKind,
+): void {
+  if (kind === "artifact") {
+    diagnostics.availableArtifactHintCount += 1;
+    return;
+  }
+
+  if (kind === "failure_warning") {
+    diagnostics.availableFailureWarningHintCount += 1;
+    return;
+  }
+
+  if (kind === "retrieval") {
+    diagnostics.availableRetrievalHintCount += 1;
+    return;
+  }
+
+  diagnostics.availableOtherHintCount += 1;
+}
+
+function incrementLowConfidenceCountForKind(
+  diagnostics: HintSelectionDiagnostics,
+  kind: SuggestionKind,
+): void {
+  diagnostics.filteredLowConfidenceHintCount += 1;
+
+  if (kind === "artifact") {
+    diagnostics.filteredLowConfidenceArtifactHintCount += 1;
+    return;
+  }
+
+  if (kind === "failure_warning") {
+    diagnostics.filteredLowConfidenceFailureWarningHintCount += 1;
+    return;
+  }
+
+  if (kind === "retrieval") {
+    diagnostics.filteredLowConfidenceRetrievalHintCount += 1;
+    return;
+  }
+
+  diagnostics.filteredLowConfidenceOtherHintCount += 1;
+}
+
+function annotateSelectedSuggestion(
+  diagnostics: HintSelectionDiagnostics,
+  selected: ScoredSuggestionCandidate | null,
+): void {
+  if (!selected) {
+    return;
+  }
+
+  diagnostics.selectedHintKind = selected.kind;
+  diagnostics.selectedHintUtilityScore = selected.utilityScore;
+
+  if (selected.kind === "artifact") {
+    diagnostics.selectedArtifactHintCount = 1;
+    return;
+  }
+
+  if (selected.kind === "failure_warning") {
+    diagnostics.selectedFailureWarningHintCount = 1;
+    return;
+  }
+
+  if (selected.kind === "retrieval") {
+    diagnostics.selectedRetrievalHintCount = 1;
+    return;
+  }
+
+  diagnostics.selectedOtherHintCount = 1;
+}
+
+function buildScoredCandidates(
+  suggestions: LearningSuggestion[],
+  diagnostics: HintSelectionDiagnostics,
+): ScoredSuggestionCandidate[] {
+  const scoredCandidates: ScoredSuggestionCandidate[] = [];
+
+  for (const suggestion of rankSuggestionsByConfidence(suggestions)) {
+    const kind = suggestionKind(suggestion);
+    incrementAvailableCountForKind(diagnostics, kind);
+
+    if (suggestion.confidence < minimumConfidenceForSuggestionKind(kind)) {
+      incrementLowConfidenceCountForKind(diagnostics, kind);
+      continue;
+    }
+
+    scoredCandidates.push({
+      suggestion,
+      kind,
+      utilityScore: utilityScoreForSuggestion(suggestion, kind),
+    });
+  }
+
+  scoredCandidates.sort((left, right) => {
+    if (right.utilityScore !== left.utilityScore) {
+      return right.utilityScore - left.utilityScore;
+    }
+
+    if (right.suggestion.confidence !== left.suggestion.confidence) {
+      return right.suggestion.confidence - left.suggestion.confidence;
+    }
+
+    return left.suggestion.id.localeCompare(right.suggestion.id);
+  });
+
+  return scoredCandidates;
 }
 
 function selectArtifactOnlySuggestions(
@@ -335,52 +514,75 @@ function selectArtifactOnlySuggestions(
 ): HintSelectionResult {
   const diagnostics = emptyHintSelectionDiagnostics();
   diagnostics.availableHintCount = suggestions.length;
+  diagnostics.selectionBudgetRaw = Math.max(0, maxSuggestions);
+  diagnostics.selectionBudgetApplied = Math.min(
+    MAX_HINTS_PER_TURN,
+    diagnostics.selectionBudgetRaw,
+  );
 
   for (const suggestion of suggestions) {
-    const kind = suggestionKind(suggestion);
-    if (kind === "artifact") {
-      diagnostics.availableArtifactHintCount += 1;
-    } else if (kind === "failure_warning") {
-      diagnostics.availableFailureWarningHintCount += 1;
-    } else if (kind === "retrieval") {
-      diagnostics.availableRetrievalHintCount += 1;
-    } else {
-      diagnostics.availableOtherHintCount += 1;
-    }
+    incrementAvailableCountForKind(diagnostics, suggestionKind(suggestion));
   }
 
-  if (maxSuggestions <= 0 || suggestions.length === 0) {
+  if (diagnostics.selectionBudgetApplied <= 0 || suggestions.length === 0) {
     return {
       selectedSuggestions: [],
       diagnostics,
     };
   }
 
-  const passingArtifacts = rankSuggestionsByConfidence(suggestions).filter(
-    (suggestion) => {
-      if (!isArtifactSuggestion(suggestion)) {
-        return false;
-      }
+  const scoredCandidates: ScoredSuggestionCandidate[] = [];
+  for (const suggestion of rankSuggestionsByConfidence(suggestions)) {
+    const kind = suggestionKind(suggestion);
+    if (kind !== "artifact") {
+      continue;
+    }
 
-      if (suggestion.confidence >= MIN_ARTIFACT_HINT_CONFIDENCE) {
-        return true;
-      }
+    if (suggestion.confidence < MIN_ARTIFACT_HINT_CONFIDENCE) {
+      incrementLowConfidenceCountForKind(diagnostics, kind);
+      continue;
+    }
 
-      diagnostics.filteredLowConfidenceHintCount += 1;
-      diagnostics.filteredLowConfidenceArtifactHintCount += 1;
-      return false;
-    },
-  );
+    scoredCandidates.push({
+      suggestion,
+      kind,
+      utilityScore: utilityScoreForSuggestion(suggestion, kind),
+    });
+  }
 
-  const selectedSuggestions = passingArtifacts.slice(0, maxSuggestions);
-  diagnostics.policySuppressedByBudgetCount = Math.max(
-    0,
-    passingArtifacts.length - selectedSuggestions.length,
-  );
-  diagnostics.selectedArtifactHintCount = selectedSuggestions.length;
+  scoredCandidates.sort((left, right) => {
+    if (right.utilityScore !== left.utilityScore) {
+      return right.utilityScore - left.utilityScore;
+    }
+
+    if (right.suggestion.confidence !== left.suggestion.confidence) {
+      return right.suggestion.confidence - left.suggestion.confidence;
+    }
+
+    return left.suggestion.id.localeCompare(right.suggestion.id);
+  });
+
+  const best = scoredCandidates[0] ?? null;
+  if (!best) {
+    return {
+      selectedSuggestions: [],
+      diagnostics,
+    };
+  }
+
+  if (best.utilityScore < MIN_SELECTED_HINT_UTILITY_SCORE) {
+    diagnostics.filteredLowUtilityHintCount = 1;
+    return {
+      selectedSuggestions: [],
+      diagnostics,
+    };
+  }
+
+  annotateSelectedSuggestion(diagnostics, best);
+  diagnostics.policySuppressedByBudgetCount = Math.max(0, scoredCandidates.length - 1);
 
   return {
-    selectedSuggestions,
+    selectedSuggestions: [best.suggestion],
     diagnostics,
   };
 }
@@ -391,126 +593,65 @@ function selectTopSuggestionsWithPolicy(
 ): HintSelectionResult {
   const diagnostics = emptyHintSelectionDiagnostics();
   diagnostics.availableHintCount = suggestions.length;
+  diagnostics.selectionBudgetRaw = Math.max(0, maxSuggestions);
+  diagnostics.selectionBudgetApplied = Math.min(
+    MAX_HINTS_PER_TURN,
+    diagnostics.selectionBudgetRaw,
+  );
 
-  const candidatesByKind: Record<SuggestionKind, LearningSuggestion[]> = {
-    artifact: [],
-    failure_warning: [],
-    retrieval: [],
-    other: [],
-  };
-
-  for (const suggestion of rankSuggestionsByConfidence(suggestions)) {
-    const kind = suggestionKind(suggestion);
-
-    if (kind === "artifact") {
-      diagnostics.availableArtifactHintCount += 1;
-    } else if (kind === "failure_warning") {
-      diagnostics.availableFailureWarningHintCount += 1;
-    } else if (kind === "retrieval") {
-      diagnostics.availableRetrievalHintCount += 1;
-    } else {
-      diagnostics.availableOtherHintCount += 1;
-    }
-
-    if (suggestion.confidence < minimumConfidenceForSuggestionKind(kind)) {
-      diagnostics.filteredLowConfidenceHintCount += 1;
-      if (kind === "artifact") {
-        diagnostics.filteredLowConfidenceArtifactHintCount += 1;
-      } else if (kind === "failure_warning") {
-        diagnostics.filteredLowConfidenceFailureWarningHintCount += 1;
-      } else if (kind === "retrieval") {
-        diagnostics.filteredLowConfidenceRetrievalHintCount += 1;
-      } else {
-        diagnostics.filteredLowConfidenceOtherHintCount += 1;
-      }
-      continue;
-    }
-
-    candidatesByKind[kind].push(suggestion);
-  }
-
-  if (maxSuggestions <= 0 || suggestions.length === 0) {
+  if (diagnostics.selectionBudgetApplied <= 0 || suggestions.length === 0) {
     return {
       selectedSuggestions: [],
       diagnostics,
     };
   }
 
-  const selectedSuggestions: LearningSuggestion[] = [];
-  const seenIds = new Set<string>();
+  const scoredCandidates = buildScoredCandidates(suggestions, diagnostics);
+  const hasArtifactCandidate = scoredCandidates.some((candidate) => {
+    return candidate.kind === "artifact";
+  });
 
-  const pushSuggestion = (candidate: LearningSuggestion): void => {
-    if (seenIds.has(candidate.id) || selectedSuggestions.length >= maxSuggestions) {
-      return;
+  let selected: ScoredSuggestionCandidate | null = null;
+
+  for (const candidate of scoredCandidates) {
+    if (
+      hasArtifactCandidate &&
+      candidate.kind === "retrieval" &&
+      candidate.suggestion.confidence < RETRIEVAL_WITH_ARTIFACT_OVERRIDE_CONFIDENCE
+    ) {
+      diagnostics.policySuppressedByArtifactPriorityCount += 1;
+      continue;
     }
 
-    selectedSuggestions.push(candidate);
-    seenIds.add(candidate.id);
-  };
-
-  for (const artifact of candidatesByKind.artifact.slice(0, MAX_ARTIFACT_HINTS)) {
-    pushSuggestion(artifact);
+    selected = candidate;
+    break;
   }
 
-  if (selectedSuggestions.length < maxSuggestions) {
-    const failureWarning = candidatesByKind.failure_warning[0];
-    if (failureWarning) {
-      pushSuggestion(failureWarning);
-    }
+  if (!selected) {
+    return {
+      selectedSuggestions: [],
+      diagnostics,
+    };
   }
 
-  if (selectedSuggestions.length < maxSuggestions) {
-    const artifactSelected = selectedSuggestions.some((candidate) => {
-      return isArtifactSuggestion(candidate);
-    });
-    const retrievalBudget = artifactSelected
-      ? Math.min(
-          MAX_RETRIEVAL_HINTS_WITH_ARTIFACT,
-          maxSuggestions - selectedSuggestions.length,
-        )
-      : maxSuggestions - selectedSuggestions.length;
-
-    for (const retrieval of candidatesByKind.retrieval.slice(0, retrievalBudget)) {
-      pushSuggestion(retrieval);
-    }
+  if (selected.utilityScore < MIN_SELECTED_HINT_UTILITY_SCORE) {
+    diagnostics.filteredLowUtilityHintCount = 1;
+    return {
+      selectedSuggestions: [],
+      diagnostics,
+    };
   }
 
-  if (selectedSuggestions.length < maxSuggestions) {
-    for (const other of candidatesByKind.other) {
-      pushSuggestion(other);
-      if (selectedSuggestions.length >= maxSuggestions) {
-        break;
-      }
-    }
-  }
+  annotateSelectedSuggestion(diagnostics, selected);
 
-  diagnostics.selectedArtifactHintCount = selectedSuggestions.filter((suggestion) => {
-    return isArtifactSuggestion(suggestion);
-  }).length;
-  diagnostics.selectedFailureWarningHintCount = selectedSuggestions.filter(
-    (suggestion) => {
-      return isFailureWarningSuggestion(suggestion);
-    },
-  ).length;
-  diagnostics.selectedRetrievalHintCount = selectedSuggestions.filter((suggestion) => {
-    return isRetrievalSuggestion(suggestion);
-  }).length;
-  diagnostics.selectedOtherHintCount = selectedSuggestions.filter((suggestion) => {
-    return suggestionKind(suggestion) === "other";
-  }).length;
-
-  const totalPassingCandidates =
-    candidatesByKind.artifact.length +
-    candidatesByKind.failure_warning.length +
-    candidatesByKind.retrieval.length +
-    candidatesByKind.other.length;
-  diagnostics.policySuppressedByBudgetCount = Math.max(
+  const effectiveCandidateCount = Math.max(
     0,
-    totalPassingCandidates - selectedSuggestions.length,
+    scoredCandidates.length - diagnostics.policySuppressedByArtifactPriorityCount,
   );
+  diagnostics.policySuppressedByBudgetCount = Math.max(0, effectiveCandidateCount - 1);
 
   return {
-    selectedSuggestions,
+    selectedSuggestions: [selected.suggestion],
     diagnostics,
   };
 }
@@ -590,6 +731,8 @@ export function createPiTraceExtension(
   options: PiTraceExtensionOptions,
 ): (pi: PiLikeApi) => void {
   const loop = options.loop;
+  const retrievalLoop = options.retrievalLoop ?? loop;
+  const retrievalMemoryMode = retrievalLoop === loop ? "live" : "frozen";
   const scope = options.scope ?? "personal";
   const harness = options.harnessName ?? "pi";
   const agentId = options.agentId;
@@ -748,11 +891,13 @@ export function createPiTraceExtension(
           payload: {
             kind: "happy_paths_prior_hints",
             hintMode,
+            retrievalMemoryMode,
             hintPolicyVersion: HINT_POLICY_VERSION,
             minArtifactHintConfidence: MIN_ARTIFACT_HINT_CONFIDENCE,
             minFailureWarningHintConfidence: MIN_FAILURE_WARNING_HINT_CONFIDENCE,
             minRetrievalHintConfidence: MIN_RETRIEVAL_HINT_CONFIDENCE,
             minOtherHintConfidence: MIN_OTHER_HINT_CONFIDENCE,
+            minSelectedHintUtilityScore: MIN_SELECTED_HINT_UTILITY_SCORE,
             retrievalScope: "disabled",
             retrievalOutcomeFilter: "disabled",
             fallbackToGlobalToolResults: false,
@@ -770,11 +915,17 @@ export function createPiTraceExtension(
             filteredLowConfidenceFailureWarningHintCount: 0,
             filteredLowConfidenceRetrievalHintCount: 0,
             filteredLowConfidenceOtherHintCount: 0,
+            filteredLowUtilityHintCount: 0,
             policySuppressedByBudgetCount: 0,
+            policySuppressedByArtifactPriorityCount: 0,
             selectedArtifactHintCount: 0,
             selectedFailureWarningHintCount: 0,
             selectedRetrievalHintCount: 0,
             selectedOtherHintCount: 0,
+            selectedHintKind: null,
+            selectedHintUtilityScore: null,
+            hintSelectionBudgetRaw: 0,
+            hintSelectionBudgetApplied: 0,
             selfFilteredHintCount: 0,
             hintIds: [],
             hintTitles: [],
@@ -798,7 +949,7 @@ export function createPiTraceExtension(
         outcomeFilter: "non_error" as const,
         fallbackToGlobalToolResults: false,
       };
-      let suggestions = [] as Awaited<ReturnType<typeof loop.suggest>>;
+      let suggestions = [] as Awaited<ReturnType<LearningLoop["suggest"]>>;
       let retrievalTimedOut = false;
       let retrievalErrorCount = 0;
       let retrievalPlansAttempted = 0;
@@ -820,7 +971,7 @@ export function createPiTraceExtension(
         retrievalPlansAttempted += 1;
 
         const candidate = await runWithTimeout(() => {
-          return loop.suggest({
+          return retrievalLoop.suggest({
             text: suggestionQuery.text,
             limit: maxSuggestions + 2,
             filters: plan.filters,
@@ -875,11 +1026,13 @@ export function createPiTraceExtension(
         payload: {
           kind: "happy_paths_prior_hints",
           hintMode,
+          retrievalMemoryMode,
           hintPolicyVersion: HINT_POLICY_VERSION,
           minArtifactHintConfidence: MIN_ARTIFACT_HINT_CONFIDENCE,
           minFailureWarningHintConfidence: MIN_FAILURE_WARNING_HINT_CONFIDENCE,
           minRetrievalHintConfidence: MIN_RETRIEVAL_HINT_CONFIDENCE,
           minOtherHintConfidence: MIN_OTHER_HINT_CONFIDENCE,
+          minSelectedHintUtilityScore: MIN_SELECTED_HINT_UTILITY_SCORE,
           retrievalScope: selectedPlan.retrievalScope,
           retrievalOutcomeFilter: selectedPlan.outcomeFilter,
           fallbackToGlobalToolResults,
@@ -909,13 +1062,21 @@ export function createPiTraceExtension(
             selection.diagnostics.filteredLowConfidenceRetrievalHintCount,
           filteredLowConfidenceOtherHintCount:
             selection.diagnostics.filteredLowConfidenceOtherHintCount,
+          filteredLowUtilityHintCount:
+            selection.diagnostics.filteredLowUtilityHintCount,
           policySuppressedByBudgetCount:
             selection.diagnostics.policySuppressedByBudgetCount,
+          policySuppressedByArtifactPriorityCount:
+            selection.diagnostics.policySuppressedByArtifactPriorityCount,
           selectedArtifactHintCount: selection.diagnostics.selectedArtifactHintCount,
           selectedFailureWarningHintCount:
             selection.diagnostics.selectedFailureWarningHintCount,
           selectedRetrievalHintCount: selection.diagnostics.selectedRetrievalHintCount,
           selectedOtherHintCount: selection.diagnostics.selectedOtherHintCount,
+          selectedHintKind: selection.diagnostics.selectedHintKind,
+          selectedHintUtilityScore: selection.diagnostics.selectedHintUtilityScore,
+          hintSelectionBudgetRaw: selection.diagnostics.selectionBudgetRaw,
+          hintSelectionBudgetApplied: selection.diagnostics.selectionBudgetApplied,
           selfFilteredHintCount: Math.max(
             0,
             suggestions.length - nonSelfSuggestions.length,

@@ -25,17 +25,31 @@ function setPiStatus(ctx: unknown, status: string): void {
   }
 }
 
+function resolvedPathFromEnv(raw: string, fallbackPath: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return fallbackPath;
+  }
+
+  if (trimmed.startsWith("~/")) {
+    return join(homedir(), trimmed.slice(2));
+  }
+
+  return resolve(process.cwd(), trimmed);
+}
+
 function traceRootFromEnv(): string {
-  const raw = (process.env.HAPPY_PATHS_TRACE_ROOT ?? "").trim();
-  if (!raw) {
-    return join(homedir(), ".happy-paths", "traces");
-  }
+  return resolvedPathFromEnv(
+    process.env.HAPPY_PATHS_TRACE_ROOT ?? "",
+    join(homedir(), ".happy-paths", "traces"),
+  );
+}
 
-  if (raw.startsWith("~/")) {
-    return join(homedir(), raw.slice(2));
-  }
-
-  return resolve(process.cwd(), raw);
+function retrievalTraceRootFromEnv(traceRoot: string): string {
+  return resolvedPathFromEnv(
+    process.env.HAPPY_PATHS_RETRIEVAL_TRACE_ROOT ?? "",
+    traceRoot,
+  );
 }
 
 function scopeFromEnv(): TraceScope {
@@ -81,12 +95,19 @@ function hintModeFromEnv(): "all" | "artifact_only" {
 
 export default function happyPathsPiExtension(pi: PiLikeApi): void {
   const traceRoot = traceRootFromEnv();
+  const retrievalTraceRoot = retrievalTraceRootFromEnv(traceRoot);
   const scope = scopeFromEnv();
   const maxSuggestions = maxSuggestionsFromEnv();
   const hintMode = hintModeFromEnv();
   const sessionId = sessionIdFromEnv();
 
-  const loop = createLocalLearningLoop({ dataDir: traceRoot });
+  const ingestLoop = createLocalLearningLoop({ dataDir: traceRoot });
+  const retrievalLoop =
+    retrievalTraceRoot === traceRoot
+      ? ingestLoop
+      : createLocalLearningLoop({ dataDir: retrievalTraceRoot });
+  const retrievalMemoryMode = retrievalTraceRoot === traceRoot ? "live" : "frozen";
+
   let bootstrapped = false;
 
   pi.on("session_start", async (_event: unknown, ctx: unknown) => {
@@ -95,11 +116,15 @@ export default function happyPathsPiExtension(pi: PiLikeApi): void {
     }
 
     try {
-      const result = await loop.bootstrapFromStore();
+      const result = await retrievalLoop.bootstrapFromStore();
       bootstrapped = true;
+      const retrievalRootSuffix =
+        retrievalTraceRoot === traceRoot
+          ? ""
+          : ` · retrievalRoot=${retrievalTraceRoot}`;
       setPiStatus(
         ctx,
-        `Happy Paths: ${result.eventCount} events (${scope}) · root=${traceRoot}`,
+        `Happy Paths: ${result.eventCount} retrieval events (${scope}, ${retrievalMemoryMode}) · traceRoot=${traceRoot}${retrievalRootSuffix}`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -108,7 +133,8 @@ export default function happyPathsPiExtension(pi: PiLikeApi): void {
   });
 
   createPiTraceExtension({
-    loop,
+    loop: ingestLoop,
+    retrievalLoop,
     scope,
     sessionId,
     maxSuggestions,
