@@ -192,6 +192,30 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     confidence: 0.95,
   },
 
+  // --- tool_setup: undocumented fixtures tool (ledgerkit) ---
+  {
+    hintId: "err-undocumented-fixtures-tool",
+    family: "tool_setup",
+    pattern: /test data not found.*\.fixtures|ledgerkit\.internal/i,
+    explanation:
+      "Test fixtures must be generated before running tests. " +
+      "This project has a ./kit tool — run ./kit init to create fixtures.",
+    fixCommand: "./kit init && pytest tests/ -x",
+    confidence: 0.9,
+  },
+
+  // --- tool_setup: undocumented test data tool (logparse) ---
+  {
+    hintId: "err-undocumented-testdata-tool",
+    family: "tool_setup",
+    pattern: /test data not found.*\.testdata|logparse\.internal/i,
+    explanation:
+      "Test data must be generated before running tests. " +
+      "This project has a ./qa tool — run ./qa setup to create test data.",
+    fixCommand: "./qa setup && pytest tests/ -x",
+    confidence: 0.9,
+  },
+
   // --- tool_flag: test timeout from slow session fixture ---
   {
     hintId: "err-session-fixture-timeout",

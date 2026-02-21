@@ -19,7 +19,7 @@ export interface RecurringTrap {
   trapId: string;
 
   /** Which error family this belongs to. */
-  family: "env_dep" | "tool_flag" | "config" | "test_scope";
+  family: "env_dep" | "tool_flag" | "config" | "test_scope" | "tool_setup";
 
   /** Human-readable description. */
   description: string;

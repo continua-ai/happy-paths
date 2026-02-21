@@ -1453,6 +1453,28 @@ export const TRAP_SESSION_FIXTURE_TIMEOUT: RecurringTrap = {
   fixCommand: "pytest --timeout=30 tests/ -x",
 };
 
+export const TRAP_UNDOCUMENTED_FIXTURES_TOOL: RecurringTrap = {
+  trapId: "undocumented-fixtures-tool",
+  family: "tool_setup",
+  description:
+    "conftest.py requires .fixtures/testdata.json but repo has no docs about how to " +
+    "create it. Custom ./kit tool generates fixtures. Error points to an internal wiki.",
+  errorPattern: "test data not found.*\\.fixtures|ledgerkit\\.internal",
+  fixDescription: "Run ./kit init to create fixtures, then pytest tests/ -x",
+  fixCommand: "./kit init && pytest tests/ -x",
+};
+
+export const TRAP_UNDOCUMENTED_TESTDATA_TOOL: RecurringTrap = {
+  trapId: "undocumented-testdata-tool",
+  family: "tool_setup",
+  description:
+    "conftest.py requires .testdata/access.log but repo has no docs about how to " +
+    "create it. Custom ./qa tool generates test data. Error points to an internal wiki.",
+  errorPattern: "test data not found.*\\.testdata|logparse\\.internal",
+  fixDescription: "Run ./qa setup to generate test data, then pytest tests/ -x",
+  fixCommand: "./qa setup && pytest tests/ -x",
+};
+
 // ─── Repo template: calclib (doctest-modules phantom import trap) ───────
 
 const CALCLIB_FILES: Record<string, string> = {
@@ -2353,6 +2375,950 @@ def get_query_param(url: str, key: str, default: str = "") -> str:
   },
 ];
 
+// ─── Undocumented-tool repos (custom tools, no README) ──────────────────
+
+const LEDGERKIT_FILES: Record<string, string> = {
+  "README.md": `# ledgerkit
+
+Internal ledger processing library.
+`,
+
+  "pyproject.toml": `[project]
+name = "ledgerkit"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+`,
+
+  "requirements.txt": `# Runtime deps
+`,
+
+  "requirements-dev.txt": `pytest>=7.0
+`,
+
+  ".gitignore": `.fixtures/
+__pycache__/
+*.egg-info/
+`,
+
+  kit: `#!/usr/bin/env bash
+set -e
+CMD="\${1:-help}"
+case "\$CMD" in
+  init)
+    mkdir -p .fixtures
+    python3 -c "
+import json
+data = {
+    'accounts': {
+        'checking': 1000.0,
+        'savings': 5000.0,
+        'credit_card': -500.0
+    },
+    'transactions': [
+        {'date': '2024-01-15', 'amount': 50.0, 'category': 'Food', 'type': 'debit'},
+        {'date': '2024-01-20', 'amount': 200.0, 'category': 'income', 'type': 'credit'},
+        {'date': '2024-02-01', 'amount': 30.0, 'category': 'food', 'type': 'debit'},
+        {'date': '2024-02-15', 'amount': 100.0, 'category': 'Food', 'type': 'debit'},
+        {'date': '2024-01-25', 'amount': 75.0, 'category': 'utilities', 'type': 'debit'}
+    ]
+}
+with open('.fixtures/testdata.json', 'w') as f:
+    json.dump(data, f, indent=2)
+print('Fixtures written to .fixtures/')
+"
+    ;;
+  check)
+    python3 -m pytest tests/ -x --tb=short
+    ;;
+  clean)
+    rm -rf .fixtures
+    echo "Cleaned."
+    ;;
+  *)
+    echo "kit: ledgerkit project tool"
+    echo ""
+    echo "Commands:"
+    echo "  init    Set up test fixtures"
+    echo "  check   Run verification suite"
+    echo "  clean   Remove generated files"
+    ;;
+esac
+`,
+
+  "ledgerkit/__init__.py": `"""ledgerkit: internal ledger processing."""
+`,
+
+  "ledgerkit/ledger.py": `"""Ledger processing operations."""
+
+
+def calculate_balance(accounts: dict[str, float]) -> float:
+    """Calculate total balance across all accounts.
+
+    BUG: uses abs() on values — treats negative balances as positive.
+    """
+    return sum(abs(v) for v in accounts.values())
+
+
+def apply_transaction(balance: float, amount: float, txn_type: str) -> float:
+    """Apply a transaction to a balance.
+
+    BUG: debit adds and credit subtracts (swapped).
+    """
+    if txn_type == "debit":
+        return balance + amount
+    elif txn_type == "credit":
+        return balance - amount
+    return balance
+
+
+def filter_by_category(
+    transactions: list[dict], category: str
+) -> list[dict]:
+    """Filter transactions matching a category.
+
+    BUG: case-sensitive comparison — 'Food' != 'food'.
+    """
+    return [t for t in transactions if t["category"] == category]
+
+
+def monthly_totals(transactions: list[dict]) -> dict[str, float]:
+    """Sum transaction amounts by month (YYYY-MM).
+
+    BUG: uses full date as key instead of YYYY-MM prefix.
+    """
+    totals: dict[str, float] = {}
+    for t in transactions:
+        key = t["date"]
+        totals[key] = totals.get(key, 0) + t["amount"]
+    return totals
+`,
+
+  "tests/__init__.py": "",
+
+  "tests/conftest.py": `"""Test configuration for ledgerkit."""
+import json
+import os
+import pytest
+
+
+def _fixtures_path():
+    return os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", ".fixtures", "testdata.json"
+    )
+
+
+def pytest_configure(config):
+    """Verify test fixtures exist."""
+    if not os.path.exists(_fixtures_path()):
+        pytest.exit(
+            "Error: test data not found (.fixtures/testdata.json).\\n"
+            "See https://ledgerkit.internal/docs/testing for setup.",
+            returncode=4,
+        )
+
+
+@pytest.fixture(scope="session")
+def test_data():
+    """Load test fixture data."""
+    with open(_fixtures_path()) as f:
+        return json.load(f)
+`,
+
+  "tests/test_ledger.py": `"""Tests for ledgerkit.ledger."""
+from ledgerkit import ledger
+
+
+def test_calculate_balance(test_data):
+    """Total: 1000 + 5000 + (-500) = 5500."""
+    result = ledger.calculate_balance(test_data["accounts"])
+    assert result == 5500.0
+
+
+def test_calculate_balance_simple():
+    assert ledger.calculate_balance({"a": 100, "b": -50}) == 50.0
+
+
+def test_apply_debit():
+    """Debit 50 from 1000 = 950."""
+    result = ledger.apply_transaction(1000.0, 50.0, "debit")
+    assert result == 950.0
+
+
+def test_apply_credit():
+    result = ledger.apply_transaction(1000.0, 200.0, "credit")
+    assert result == 1200.0
+
+
+def test_filter_by_category(test_data):
+    """'food' should match both 'Food' and 'food' (case-insensitive)."""
+    result = ledger.filter_by_category(test_data["transactions"], "food")
+    assert len(result) == 3
+
+
+def test_filter_by_category_exact():
+    txns = [{"category": "Food"}, {"category": "food"}, {"category": "drink"}]
+    result = ledger.filter_by_category(txns, "food")
+    assert len(result) == 2
+
+
+def test_monthly_totals(test_data):
+    """January: 50+200+75=325, February: 30+100=130."""
+    result = ledger.monthly_totals(test_data["transactions"])
+    assert "2024-01" in result
+    assert result["2024-01"] == 325.0
+    assert result["2024-02"] == 130.0
+
+
+def test_monthly_totals_keys(test_data):
+    result = ledger.monthly_totals(test_data["transactions"])
+    assert set(result.keys()) == {"2024-01", "2024-02"}
+`,
+
+  "setup.py": `from setuptools import setup, find_packages
+setup(name="ledgerkit", version="0.1.0", packages=find_packages())
+`,
+};
+
+const LOGPARSE_FILES: Record<string, string> = {
+  "README.md": `# logparse
+
+Internal log analysis tools.
+`,
+
+  "pyproject.toml": `[project]
+name = "logparse"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+`,
+
+  "requirements.txt": `# Runtime deps
+`,
+
+  "requirements-dev.txt": `pytest>=7.0
+`,
+
+  ".gitignore": `.testdata/
+__pycache__/
+*.egg-info/
+`,
+
+  qa: `#!/usr/bin/env bash
+set -e
+CMD="\${1:-help}"
+case "\$CMD" in
+  setup)
+    mkdir -p .testdata
+    cat > .testdata/access.log << 'LOG'
+2024-01-15T10:30:00Z 192.168.1.1:8080 GET /api/users 200 45ms
+2024-01-15T10:30:01Z 192.168.1.2:9090 POST /api/login 401 12ms
+2024-01-15T10:30:02Z 10.0.0.1:80 GET /health 200 2ms
+2024-01-15T10:30:03Z 192.168.1.1:8080 DELETE /api/users/5 403 8ms
+2024-01-15T10:30:04Z 10.0.0.1:80 GET /api/data 500 120ms
+LOG
+    echo "Test data written to .testdata/"
+    ;;
+  test)
+    python3 -m pytest tests/ -x --tb=short
+    ;;
+  clean)
+    rm -rf .testdata
+    echo "Cleaned."
+    ;;
+  *)
+    echo "qa: logparse quality assurance"
+    echo ""
+    echo "Commands:"
+    echo "  setup   Generate test data"
+    echo "  test    Run test suite"
+    echo "  clean   Remove test data"
+    ;;
+esac
+`,
+
+  "logparse/__init__.py": `"""logparse: internal log analysis tools."""
+`,
+
+  "logparse/parser.py": `"""Log file parser utilities."""
+
+
+def parse_log_entry(line: str) -> dict:
+    """Parse a log line into a structured entry.
+
+    Format: 'timestamp ip:port method path status duration'
+    """
+    parts = line.strip().split()
+    ip_port = parts[1]
+    ip, port = ip_port.rsplit(":", 1)
+    return {
+        "timestamp": parts[0],
+        "ip": ip,
+        "port": int(port),
+        "method": parts[2],
+        "path": parts[3],
+        "status": int(parts[4]),
+        "duration_ms": int(parts[5].replace("ms", "")),
+    }
+
+
+def filter_by_status(entries: list[dict], status: int) -> list[dict]:
+    """Filter entries by HTTP status code.
+
+    BUG: compares int status to string — never matches.
+    """
+    return [e for e in entries if e["status"] == str(status)]
+
+
+def unique_ips(entries: list[dict]) -> set[str]:
+    """Get set of unique IP addresses from entries.
+
+    BUG: includes port number in the IP string.
+    """
+    return {f"{e['ip']}:{e['port']}" for e in entries}
+
+
+def average_duration(entries: list[dict]) -> float:
+    """Calculate average response time in milliseconds.
+
+    BUG: uses integer division (//) instead of true division (/).
+    """
+    if not entries:
+        return 0.0
+    total = sum(e["duration_ms"] for e in entries)
+    return total // len(entries)
+
+
+def error_rate(entries: list[dict]) -> float:
+    """Calculate fraction of entries with error status (>= 400).
+
+    BUG: only counts server errors (>= 500), not all errors (>= 400).
+    """
+    if not entries:
+        return 0.0
+    errors = sum(1 for e in entries if e["status"] >= 500)
+    return errors / len(entries)
+`,
+
+  "tests/__init__.py": "",
+
+  "tests/conftest.py": `"""Test configuration for logparse."""
+import os
+import pytest
+
+
+def _test_log_path():
+    return os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", ".testdata", "access.log"
+    )
+
+
+def pytest_configure(config):
+    """Verify test data exists."""
+    if not os.path.exists(_test_log_path()):
+        pytest.exit(
+            "Error: test data not found (.testdata/access.log).\\n"
+            "See https://logparse.internal/wiki/qa-setup for instructions.",
+            returncode=4,
+        )
+
+
+@pytest.fixture(scope="session")
+def log_entries():
+    """Parse test access log into entries."""
+    from logparse import parser
+
+    entries = []
+    with open(_test_log_path()) as f:
+        for line in f:
+            if line.strip():
+                entries.append(parser.parse_log_entry(line))
+    return entries
+`,
+
+  "tests/test_parser.py": `"""Tests for logparse.parser."""
+import pytest
+from logparse import parser
+
+
+def test_filter_by_status_200(log_entries):
+    """Should find entries with status 200."""
+    result = parser.filter_by_status(log_entries, 200)
+    assert len(result) == 2
+
+
+def test_filter_by_status_401(log_entries):
+    result = parser.filter_by_status(log_entries, 401)
+    assert len(result) == 1
+
+
+def test_unique_ips(log_entries):
+    """Should return IPs without port numbers."""
+    result = parser.unique_ips(log_entries)
+    assert result == {"192.168.1.1", "192.168.1.2", "10.0.0.1"}
+
+
+def test_unique_ips_count(log_entries):
+    result = parser.unique_ips(log_entries)
+    assert len(result) == 3
+
+
+def test_average_duration(log_entries):
+    """Average of [45, 12, 2, 8, 120] = 37.4."""
+    result = parser.average_duration(log_entries)
+    assert result == pytest.approx(37.4)
+
+
+def test_average_duration_type(log_entries):
+    result = parser.average_duration(log_entries)
+    assert isinstance(result, float)
+
+
+def test_error_rate(log_entries):
+    """3 errors (401, 403, 500) out of 5 = 0.6."""
+    result = parser.error_rate(log_entries)
+    assert result == pytest.approx(0.6)
+
+
+def test_error_rate_includes_client_errors(log_entries):
+    """Should count both 4xx and 5xx as errors."""
+    result = parser.error_rate(log_entries)
+    assert result == pytest.approx(0.6)
+`,
+
+  "setup.py": `from setuptools import setup, find_packages
+setup(name="logparse", version="0.1.0", packages=find_packages())
+`,
+};
+
+// ─── Undocumented-tool template definitions ─────────────────────────────
+
+export const LEDGERKIT_TEMPLATE: RepoTemplate = {
+  templateId: "ledgerkit",
+  name: "ledgerkit",
+  description:
+    "Ledger processing library with undocumented custom ./kit tool. " +
+    "Tests require fixture data that only ./kit init creates. " +
+    "No README explains the tool. Error points to an internal wiki URL.",
+  language: "python",
+  files: LEDGERKIT_FILES,
+  setupCommands: [],
+  executablePaths: ["kit"],
+  traps: [TRAP_UNDOCUMENTED_FIXTURES_TOOL],
+};
+
+export const LOGPARSE_TEMPLATE: RepoTemplate = {
+  templateId: "logparse",
+  name: "logparse",
+  description:
+    "Log analysis library with undocumented custom ./qa tool. " +
+    "Tests require test data that only ./qa setup creates. " +
+    "No README explains the tool. Error points to an internal wiki URL.",
+  language: "python",
+  files: LOGPARSE_FILES,
+  setupCommands: [],
+  executablePaths: ["qa"],
+  traps: [TRAP_UNDOCUMENTED_TESTDATA_TOOL],
+};
+
+// ─── Undocumented-tool tasks ────────────────────────────────────────────
+
+const LEDGERKIT_BUGGY = LEDGERKIT_FILES["ledgerkit/ledger.py"];
+
+export const LEDGERKIT_TASKS: RecurringPatternTask[] = [
+  {
+    taskId: "ledgerkit-001-balance",
+    repoTemplateId: "ledgerkit",
+    bugDescription: "calculate_balance() uses abs() on account values",
+    problemStatement: `The \`calculate_balance()\` function in \`ledgerkit/ledger.py\` uses \`abs()\` on all values, treating negative balances (like credit cards) as positive. For accounts \`{checking: 1000, savings: 5000, credit_card: -500}\`, it should return 5500.0, not 6500.0.
+
+The failing test is \`tests/test_ledger.py::test_calculate_balance\`.`,
+    expectedTrapIds: ["undocumented-fixtures-tool"],
+    verifyCommand: "pytest tests/test_ledger.py::test_calculate_balance -x",
+    goldPatch: {
+      "ledgerkit/ledger.py": `"""Ledger processing operations."""
+
+
+def calculate_balance(accounts: dict[str, float]) -> float:
+    """Calculate total balance across all accounts."""
+    return sum(accounts.values())
+
+
+def apply_transaction(balance: float, amount: float, txn_type: str) -> float:
+    """Apply a transaction to a balance.
+
+    BUG: debit adds and credit subtracts (swapped).
+    """
+    if txn_type == "debit":
+        return balance + amount
+    elif txn_type == "credit":
+        return balance - amount
+    return balance
+
+
+def filter_by_category(
+    transactions: list[dict], category: str
+) -> list[dict]:
+    """Filter transactions matching a category.
+
+    BUG: case-sensitive comparison — 'Food' != 'food'.
+    """
+    return [t for t in transactions if t["category"] == category]
+
+
+def monthly_totals(transactions: list[dict]) -> dict[str, float]:
+    """Sum transaction amounts by month (YYYY-MM).
+
+    BUG: uses full date as key instead of YYYY-MM prefix.
+    """
+    totals: dict[str, float] = {}
+    for t in transactions:
+        key = t["date"]
+        totals[key] = totals.get(key, 0) + t["amount"]
+    return totals
+`,
+    },
+  },
+  {
+    taskId: "ledgerkit-002-transaction",
+    repoTemplateId: "ledgerkit",
+    bugDescription: "apply_transaction() swaps debit and credit",
+    problemStatement: `The \`apply_transaction()\` function in \`ledgerkit/ledger.py\` adds for debits and subtracts for credits — the logic is reversed. \`apply_transaction(1000.0, 50.0, "debit")\` should return 950.0, not 1050.0.
+
+The failing test is \`tests/test_ledger.py::test_apply_debit\`.`,
+    expectedTrapIds: ["undocumented-fixtures-tool"],
+    verifyCommand: "pytest tests/test_ledger.py::test_apply_debit -x",
+    goldPatch: {
+      "ledgerkit/ledger.py": `"""Ledger processing operations."""
+
+
+def calculate_balance(accounts: dict[str, float]) -> float:
+    """Calculate total balance across all accounts.
+
+    BUG: uses abs() on values — treats negative balances as positive.
+    """
+    return sum(abs(v) for v in accounts.values())
+
+
+def apply_transaction(balance: float, amount: float, txn_type: str) -> float:
+    """Apply a transaction to a balance."""
+    if txn_type == "debit":
+        return balance - amount
+    elif txn_type == "credit":
+        return balance + amount
+    return balance
+
+
+def filter_by_category(
+    transactions: list[dict], category: str
+) -> list[dict]:
+    """Filter transactions matching a category.
+
+    BUG: case-sensitive comparison — 'Food' != 'food'.
+    """
+    return [t for t in transactions if t["category"] == category]
+
+
+def monthly_totals(transactions: list[dict]) -> dict[str, float]:
+    """Sum transaction amounts by month (YYYY-MM).
+
+    BUG: uses full date as key instead of YYYY-MM prefix.
+    """
+    totals: dict[str, float] = {}
+    for t in transactions:
+        key = t["date"]
+        totals[key] = totals.get(key, 0) + t["amount"]
+    return totals
+`,
+    },
+  },
+  {
+    taskId: "ledgerkit-003-category",
+    repoTemplateId: "ledgerkit",
+    bugDescription: "filter_by_category() is case-sensitive",
+    problemStatement: `The \`filter_by_category()\` function in \`ledgerkit/ledger.py\` uses exact string comparison, so \`"Food"\` doesn't match \`"food"\`. The filter should be case-insensitive.
+
+The failing test is \`tests/test_ledger.py::test_filter_by_category\`.`,
+    expectedTrapIds: ["undocumented-fixtures-tool"],
+    verifyCommand: "pytest tests/test_ledger.py::test_filter_by_category -x",
+    goldPatch: {
+      "ledgerkit/ledger.py": `"""Ledger processing operations."""
+
+
+def calculate_balance(accounts: dict[str, float]) -> float:
+    """Calculate total balance across all accounts.
+
+    BUG: uses abs() on values — treats negative balances as positive.
+    """
+    return sum(abs(v) for v in accounts.values())
+
+
+def apply_transaction(balance: float, amount: float, txn_type: str) -> float:
+    """Apply a transaction to a balance.
+
+    BUG: debit adds and credit subtracts (swapped).
+    """
+    if txn_type == "debit":
+        return balance + amount
+    elif txn_type == "credit":
+        return balance - amount
+    return balance
+
+
+def filter_by_category(
+    transactions: list[dict], category: str
+) -> list[dict]:
+    """Filter transactions matching a category (case-insensitive)."""
+    return [t for t in transactions if t["category"].lower() == category.lower()]
+
+
+def monthly_totals(transactions: list[dict]) -> dict[str, float]:
+    """Sum transaction amounts by month (YYYY-MM).
+
+    BUG: uses full date as key instead of YYYY-MM prefix.
+    """
+    totals: dict[str, float] = {}
+    for t in transactions:
+        key = t["date"]
+        totals[key] = totals.get(key, 0) + t["amount"]
+    return totals
+`,
+    },
+  },
+  {
+    taskId: "ledgerkit-004-monthly",
+    repoTemplateId: "ledgerkit",
+    bugDescription: "monthly_totals() uses full date instead of YYYY-MM",
+    problemStatement: `The \`monthly_totals()\` function in \`ledgerkit/ledger.py\` uses the full date string as the grouping key instead of the YYYY-MM prefix. Results should be grouped by month.
+
+The failing test is \`tests/test_ledger.py::test_monthly_totals\`.`,
+    expectedTrapIds: ["undocumented-fixtures-tool"],
+    verifyCommand: "pytest tests/test_ledger.py::test_monthly_totals -x",
+    goldPatch: {
+      "ledgerkit/ledger.py": `"""Ledger processing operations."""
+
+
+def calculate_balance(accounts: dict[str, float]) -> float:
+    """Calculate total balance across all accounts.
+
+    BUG: uses abs() on values — treats negative balances as positive.
+    """
+    return sum(abs(v) for v in accounts.values())
+
+
+def apply_transaction(balance: float, amount: float, txn_type: str) -> float:
+    """Apply a transaction to a balance.
+
+    BUG: debit adds and credit subtracts (swapped).
+    """
+    if txn_type == "debit":
+        return balance + amount
+    elif txn_type == "credit":
+        return balance - amount
+    return balance
+
+
+def filter_by_category(
+    transactions: list[dict], category: str
+) -> list[dict]:
+    """Filter transactions matching a category.
+
+    BUG: case-sensitive comparison — 'Food' != 'food'.
+    """
+    return [t for t in transactions if t["category"] == category]
+
+
+def monthly_totals(transactions: list[dict]) -> dict[str, float]:
+    """Sum transaction amounts by month (YYYY-MM)."""
+    totals: dict[str, float] = {}
+    for t in transactions:
+        key = t["date"][:7]
+        totals[key] = totals.get(key, 0) + t["amount"]
+    return totals
+`,
+    },
+  },
+];
+
+export const LOGPARSE_TASKS: RecurringPatternTask[] = [
+  {
+    taskId: "logparse-001-filter-status",
+    repoTemplateId: "logparse",
+    bugDescription: "filter_by_status() compares int to string",
+    problemStatement: `The \`filter_by_status()\` function in \`logparse/parser.py\` compares the integer status field to a string representation, so it never matches. \`filter_by_status(entries, 200)\` should find entries with status 200.
+
+The failing test is \`tests/test_parser.py::test_filter_by_status_200\`.`,
+    expectedTrapIds: ["undocumented-testdata-tool"],
+    verifyCommand: "pytest tests/test_parser.py::test_filter_by_status_200 -x",
+    goldPatch: {
+      "logparse/parser.py": `"""Log file parser utilities."""
+
+
+def parse_log_entry(line: str) -> dict:
+    """Parse a log line into a structured entry.
+
+    Format: 'timestamp ip:port method path status duration'
+    """
+    parts = line.strip().split()
+    ip_port = parts[1]
+    ip, port = ip_port.rsplit(":", 1)
+    return {
+        "timestamp": parts[0],
+        "ip": ip,
+        "port": int(port),
+        "method": parts[2],
+        "path": parts[3],
+        "status": int(parts[4]),
+        "duration_ms": int(parts[5].replace("ms", "")),
+    }
+
+
+def filter_by_status(entries: list[dict], status: int) -> list[dict]:
+    """Filter entries by HTTP status code."""
+    return [e for e in entries if e["status"] == status]
+
+
+def unique_ips(entries: list[dict]) -> set[str]:
+    """Get set of unique IP addresses from entries.
+
+    BUG: includes port number in the IP string.
+    """
+    return {f"{e['ip']}:{e['port']}" for e in entries}
+
+
+def average_duration(entries: list[dict]) -> float:
+    """Calculate average response time in milliseconds.
+
+    BUG: uses integer division (//) instead of true division (/).
+    """
+    if not entries:
+        return 0.0
+    total = sum(e["duration_ms"] for e in entries)
+    return total // len(entries)
+
+
+def error_rate(entries: list[dict]) -> float:
+    """Calculate fraction of entries with error status (>= 400).
+
+    BUG: only counts server errors (>= 500), not all errors (>= 400).
+    """
+    if not entries:
+        return 0.0
+    errors = sum(1 for e in entries if e["status"] >= 500)
+    return errors / len(entries)
+`,
+    },
+  },
+  {
+    taskId: "logparse-002-unique-ips",
+    repoTemplateId: "logparse",
+    bugDescription: "unique_ips() includes port in the IP string",
+    problemStatement: `The \`unique_ips()\` function in \`logparse/parser.py\` includes the port number in each IP string (e.g. "192.168.1.1:8080" instead of "192.168.1.1"). It should return bare IP addresses.
+
+The failing test is \`tests/test_parser.py::test_unique_ips\`.`,
+    expectedTrapIds: ["undocumented-testdata-tool"],
+    verifyCommand: "pytest tests/test_parser.py::test_unique_ips -x",
+    goldPatch: {
+      "logparse/parser.py": `"""Log file parser utilities."""
+
+
+def parse_log_entry(line: str) -> dict:
+    """Parse a log line into a structured entry.
+
+    Format: 'timestamp ip:port method path status duration'
+    """
+    parts = line.strip().split()
+    ip_port = parts[1]
+    ip, port = ip_port.rsplit(":", 1)
+    return {
+        "timestamp": parts[0],
+        "ip": ip,
+        "port": int(port),
+        "method": parts[2],
+        "path": parts[3],
+        "status": int(parts[4]),
+        "duration_ms": int(parts[5].replace("ms", "")),
+    }
+
+
+def filter_by_status(entries: list[dict], status: int) -> list[dict]:
+    """Filter entries by HTTP status code.
+
+    BUG: compares int status to string — never matches.
+    """
+    return [e for e in entries if e["status"] == str(status)]
+
+
+def unique_ips(entries: list[dict]) -> set[str]:
+    """Get set of unique IP addresses from entries."""
+    return {e["ip"] for e in entries}
+
+
+def average_duration(entries: list[dict]) -> float:
+    """Calculate average response time in milliseconds.
+
+    BUG: uses integer division (//) instead of true division (/).
+    """
+    if not entries:
+        return 0.0
+    total = sum(e["duration_ms"] for e in entries)
+    return total // len(entries)
+
+
+def error_rate(entries: list[dict]) -> float:
+    """Calculate fraction of entries with error status (>= 400).
+
+    BUG: only counts server errors (>= 500), not all errors (>= 400).
+    """
+    if not entries:
+        return 0.0
+    errors = sum(1 for e in entries if e["status"] >= 500)
+    return errors / len(entries)
+`,
+    },
+  },
+  {
+    taskId: "logparse-003-avg-duration",
+    repoTemplateId: "logparse",
+    bugDescription: "average_duration() uses integer division",
+    problemStatement: `The \`average_duration()\` function in \`logparse/parser.py\` uses \`//\` (integer division) instead of \`/\` (true division). For durations [45, 12, 2, 8, 120], it should return 37.4, not 37.0.
+
+The failing test is \`tests/test_parser.py::test_average_duration\`.`,
+    expectedTrapIds: ["undocumented-testdata-tool"],
+    verifyCommand: "pytest tests/test_parser.py::test_average_duration -x",
+    goldPatch: {
+      "logparse/parser.py": `"""Log file parser utilities."""
+
+
+def parse_log_entry(line: str) -> dict:
+    """Parse a log line into a structured entry.
+
+    Format: 'timestamp ip:port method path status duration'
+    """
+    parts = line.strip().split()
+    ip_port = parts[1]
+    ip, port = ip_port.rsplit(":", 1)
+    return {
+        "timestamp": parts[0],
+        "ip": ip,
+        "port": int(port),
+        "method": parts[2],
+        "path": parts[3],
+        "status": int(parts[4]),
+        "duration_ms": int(parts[5].replace("ms", "")),
+    }
+
+
+def filter_by_status(entries: list[dict], status: int) -> list[dict]:
+    """Filter entries by HTTP status code.
+
+    BUG: compares int status to string — never matches.
+    """
+    return [e for e in entries if e["status"] == str(status)]
+
+
+def unique_ips(entries: list[dict]) -> set[str]:
+    """Get set of unique IP addresses from entries.
+
+    BUG: includes port number in the IP string.
+    """
+    return {f"{e['ip']}:{e['port']}" for e in entries}
+
+
+def average_duration(entries: list[dict]) -> float:
+    """Calculate average response time in milliseconds."""
+    if not entries:
+        return 0.0
+    total = sum(e["duration_ms"] for e in entries)
+    return total / len(entries)
+
+
+def error_rate(entries: list[dict]) -> float:
+    """Calculate fraction of entries with error status (>= 400).
+
+    BUG: only counts server errors (>= 500), not all errors (>= 400).
+    """
+    if not entries:
+        return 0.0
+    errors = sum(1 for e in entries if e["status"] >= 500)
+    return errors / len(entries)
+`,
+    },
+  },
+  {
+    taskId: "logparse-004-error-rate",
+    repoTemplateId: "logparse",
+    bugDescription: "error_rate() only counts 5xx, not 4xx",
+    problemStatement: `The \`error_rate()\` function in \`logparse/parser.py\` only counts status >= 500 (server errors) but should count >= 400 (all errors including client errors). For entries with statuses [200, 401, 200, 403, 500], the error rate should be 0.6, not 0.2.
+
+The failing test is \`tests/test_parser.py::test_error_rate\`.`,
+    expectedTrapIds: ["undocumented-testdata-tool"],
+    verifyCommand: "pytest tests/test_parser.py::test_error_rate -x",
+    goldPatch: {
+      "logparse/parser.py": `"""Log file parser utilities."""
+
+
+def parse_log_entry(line: str) -> dict:
+    """Parse a log line into a structured entry.
+
+    Format: 'timestamp ip:port method path status duration'
+    """
+    parts = line.strip().split()
+    ip_port = parts[1]
+    ip, port = ip_port.rsplit(":", 1)
+    return {
+        "timestamp": parts[0],
+        "ip": ip,
+        "port": int(port),
+        "method": parts[2],
+        "path": parts[3],
+        "status": int(parts[4]),
+        "duration_ms": int(parts[5].replace("ms", "")),
+    }
+
+
+def filter_by_status(entries: list[dict], status: int) -> list[dict]:
+    """Filter entries by HTTP status code.
+
+    BUG: compares int status to string — never matches.
+    """
+    return [e for e in entries if e["status"] == str(status)]
+
+
+def unique_ips(entries: list[dict]) -> set[str]:
+    """Get set of unique IP addresses from entries.
+
+    BUG: includes port number in the IP string.
+    """
+    return {f"{e['ip']}:{e['port']}" for e in entries}
+
+
+def average_duration(entries: list[dict]) -> float:
+    """Calculate average response time in milliseconds.
+
+    BUG: uses integer division (//) instead of true division (/).
+    """
+    if not entries:
+        return 0.0
+    total = sum(e["duration_ms"] for e in entries)
+    return total // len(entries)
+
+
+def error_rate(entries: list[dict]) -> float:
+    """Calculate fraction of entries with error status (>= 400)."""
+    if not entries:
+        return 0.0
+    errors = sum(1 for e in entries if e["status"] >= 400)
+    return errors / len(entries)
+`,
+    },
+  },
+];
+
 // ─── Hard-trap template definitions ─────────────────────────────────────
 
 export const TASKAPI_TEMPLATE: RepoTemplate = {
@@ -3016,6 +3982,8 @@ export const ALL_TEMPLATES: RepoTemplate[] = [
   BUILDKIT_TEMPLATE,
   CALCLIB_TEMPLATE,
   WEBUTIL_TEMPLATE,
+  LEDGERKIT_TEMPLATE,
+  LOGPARSE_TEMPLATE,
 ];
 
 /** All tasks. */
@@ -3026,6 +3994,8 @@ export const ALL_TASKS: RecurringPatternTask[] = [
   ...BUILDKIT_TASKS,
   ...CALCLIB_TASKS,
   ...WEBUTIL_TASKS,
+  ...LEDGERKIT_TASKS,
+  ...LOGPARSE_TASKS,
 ];
 
 /** All unique traps. */
@@ -3043,4 +4013,6 @@ export const ALL_TRAPS: RecurringTrap[] = [
   TRAP_CUSTOM_BUILD_TOOL,
   TRAP_PHANTOM_PLUGINS_DEP,
   TRAP_SESSION_FIXTURE_TIMEOUT,
+  TRAP_UNDOCUMENTED_FIXTURES_TOOL,
+  TRAP_UNDOCUMENTED_TESTDATA_TOOL,
 ];
