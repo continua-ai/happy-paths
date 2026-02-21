@@ -177,6 +177,39 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     confidence: 0.95,
   },
 
+  // ═══ SETUP RECIPE HINTS (full sad-path avoidance) ═══
+  //
+  // These fire on the very first error and provide the complete
+  // setup recipe so the agent skips the entire explore→fail→retry loop.
+
+  // --- Generic: pytest not found / not installed ---
+  {
+    hintId: "err-pytest-not-available",
+    family: "tool_flag",
+    pattern: /pytest: command not found|No module named pytest/i,
+    explanation:
+      "pytest is not installed globally. Create a venv and install dev deps: " +
+      "python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt " +
+      "&& .venv/bin/pytest tests/ -x. " +
+      "Also check for project-specific setup scripts (e.g. executable files in the repo root).",
+    fixCommand:
+      "python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/pytest tests/ -x",
+    confidence: 0.95,
+  },
+
+  // --- Generic: externally managed environment ---
+  {
+    hintId: "err-externally-managed-env",
+    family: "tool_flag",
+    pattern: /externally.managed.environment/i,
+    explanation:
+      "This Python is externally managed (e.g. Homebrew). " +
+      "Create a venv first: python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt",
+    fixCommand:
+      "python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt",
+    confidence: 0.95,
+  },
+
   // ═══ EXPERIENCE-ONLY TRAPS (misdirecting errors) ═══
 
   // --- env_dep: phantom plugins package (not on PyPI) ---

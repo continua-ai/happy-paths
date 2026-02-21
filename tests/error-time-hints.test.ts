@@ -81,17 +81,27 @@ describe("HardWiredErrorTimeMatcher", () => {
     });
   });
 
-  describe("easy traps — NOT matched (models handle these)", () => {
-    it("does not match pytest: command not found", () => {
-      expect(
-        matcher.match("/bin/bash: line 1: pytest: command not found"),
-      ).toBeNull();
+  describe("setup recipe hints (prevent full sad-path loops)", () => {
+    it("matches pytest: command not found", () => {
+      const hint = matcher.match(
+        "/bin/bash: line 1: pytest: command not found",
+      );
+      expect(hint).not.toBeNull();
+      expect(hint?.hintId).toBe("err-pytest-not-available");
     });
 
-    it("does not match externally-managed-environment", () => {
-      expect(
-        matcher.match("error: externally-managed-environment"),
-      ).toBeNull();
+    it("matches No module named pytest", () => {
+      const hint = matcher.match(
+        "/opt/homebrew/bin/python3.14: No module named pytest",
+      );
+      expect(hint).not.toBeNull();
+      expect(hint?.hintId).toBe("err-pytest-not-available");
+    });
+
+    it("matches externally-managed-environment", () => {
+      const hint = matcher.match("error: externally-managed-environment");
+      expect(hint).not.toBeNull();
+      expect(hint?.hintId).toBe("err-externally-managed-env");
     });
 
     it("does not match generic missing module", () => {
@@ -138,11 +148,10 @@ describe("DEFAULT_PATTERNS", () => {
     expect(ids).toContain("err-generated-code-missing");
   });
 
-  it("does NOT have easy-trap patterns", () => {
+  it("has setup recipe patterns for common sad paths", () => {
     const ids = DEFAULT_PATTERNS.map((p) => p.hintId);
-    expect(ids).not.toContain("err-pytest-not-found");
-    expect(ids).not.toContain("err-externally-managed-env");
-    expect(ids).not.toContain("err-generic-missing-module");
+    expect(ids).toContain("err-pytest-not-available");
+    expect(ids).toContain("err-externally-managed-env");
   });
 
   it("every pattern has required fields", () => {
