@@ -343,6 +343,7 @@ async function runVariant(options: {
 
   if (options.variant === "off") {
     env.HAPPY_PATHS_HINT_MODE = "none";
+    env.HAPPY_PATHS_ERROR_TIME_HINTS = "off";
   } else if (options.onHintMode !== null) {
     env.HAPPY_PATHS_HINT_MODE = options.onHintMode;
   }

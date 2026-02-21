@@ -124,6 +124,33 @@ export function formatErrorTimeHint(hint: ErrorTimeHint): string {
 // ─── Default patterns ───────────────────────────────────────────────────
 
 export const DEFAULT_PATTERNS: HardWiredPattern[] = [
+  // --- env_dep: command not found (most common real-world trap) ---
+  {
+    hintId: "err-pytest-not-found",
+    family: "env_dep",
+    pattern: /(?:command not found|No such file).*pytest|pytest.*command not found/i,
+    explanation:
+      "pytest is not installed globally. Create a virtual environment and install " +
+      "dependencies: python3 -m venv .venv && source .venv/bin/activate && " +
+      "pip install -r requirements-dev.txt && pip install -e .",
+    fixCommand:
+      "python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements-dev.txt && pip install -e .",
+    confidence: 0.95,
+  },
+
+  // --- env_dep: externally-managed-environment (PEP 668) ---
+  {
+    hintId: "err-externally-managed-env",
+    family: "env_dep",
+    pattern: /externally-managed-environment/i,
+    explanation:
+      "This Python environment is externally managed (PEP 668). " +
+      "Create a virtual environment instead of installing system-wide.",
+    fixCommand:
+      "python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements-dev.txt",
+    confidence: 0.95,
+  },
+
   // --- env_dep: missing pytest-cov ---
   {
     hintId: "err-missing-pytest-cov-unrecognized",
