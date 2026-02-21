@@ -130,11 +130,9 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     family: "env_dep",
     pattern: /(?:command not found|No such file).*pytest|pytest.*command not found/i,
     explanation:
-      "pytest is not installed globally. Create a virtual environment and install " +
-      "dependencies: python3 -m venv .venv && source .venv/bin/activate && " +
-      "pip install -r requirements-dev.txt && pip install -e .",
-    fixCommand:
-      "python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements-dev.txt && pip install -e .",
+      "pytest is not on PATH. This repo needs a virtual environment — " +
+      "check for requirements-dev.txt or pyproject.toml [project.optional-dependencies].",
+    fixCommand: "create a venv, install dev deps, then retry",
     confidence: 0.95,
   },
 
@@ -144,10 +142,9 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     family: "env_dep",
     pattern: /externally-managed-environment/i,
     explanation:
-      "This Python environment is externally managed (PEP 668). " +
-      "Create a virtual environment instead of installing system-wide.",
-    fixCommand:
-      "python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements-dev.txt",
+      "System Python is externally managed (PEP 668) — pip install won't work here. " +
+      "Use a virtual environment instead.",
+    fixCommand: "create a venv first, then pip install inside it",
     confidence: 0.95,
   },
 
@@ -157,8 +154,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     family: "env_dep",
     pattern: /unrecognized arguments?.*--cov/i,
     explanation:
-      "pytest-cov is not installed, but pyproject.toml configures --cov in addopts. " +
-      "This causes pytest to fail before running any tests.",
+      "pytest-cov plugin is missing. pyproject.toml configures --cov in addopts " +
+      "so pytest fails before running any tests.",
     fixCommand: "pip install pytest-cov",
     confidence: 0.95,
   },
@@ -167,7 +164,7 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     family: "env_dep",
     pattern: /(?:ModuleNotFoundError|ImportError).*(?:pytest_cov|pytest\.cov)/i,
     explanation:
-      "pytest-cov is not installed. The test configuration requires it for coverage reporting.",
+      "pytest-cov plugin is missing. The test config requires it for coverage.",
     fixCommand: "pip install pytest-cov",
     confidence: 0.95,
   },
@@ -177,8 +174,7 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     hintId: "err-missing-pyyaml",
     family: "env_dep",
     pattern: /(?:ModuleNotFoundError|ImportError).*No module named.*['"]yaml['"]/i,
-    explanation:
-      "PyYAML is not installed. The code imports yaml but it's not in requirements.txt.",
+    explanation: "The yaml module is PyYAML on PyPI (not 'yaml').",
     fixCommand: "pip install pyyaml",
     confidence: 0.95,
   },
@@ -190,8 +186,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     pattern:
       /(?:ModuleNotFoundError|ImportError).*No module named.*['"](?:pymath|dataproc|taskapi)['"]/i,
     explanation:
-      "The package is not installed. Tests import it but it's not on sys.path. " +
-      "Install in editable/dev mode so tests can find it.",
+      "This project's own package isn't on sys.path. " +
+      "It likely needs an editable install so tests can import it.",
     fixCommand: "pip install -e .",
     confidence: 0.9,
   },
@@ -202,7 +198,7 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     family: "config",
     pattern: /FileNotFoundError.*config\.yaml/i,
     explanation:
-      "config.yaml doesn't exist. The repo has config.yaml.example — copy it.",
+      "config.yaml is missing. Look for a config.yaml.example or similar template in the repo.",
     fixCommand: "cp config.yaml.example config.yaml",
     confidence: 0.9,
   },
@@ -213,36 +209,32 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     family: "config",
     pattern: /KeyError.*['"]SECRET_KEY['"]/i,
     explanation:
-      "The SECRET_KEY environment variable is not set. It's required by the app configuration.",
-    fixCommand: "export SECRET_KEY=test-secret-key-for-dev",
+      "SECRET_KEY env var is required. Check for a .env.example or config docs.",
+    fixCommand: "export SECRET_KEY=<any-value-for-dev>",
     confidence: 0.85,
   },
 
   // --- tool_flag: broad pytest catching slow tests ---
-  // This one is trickier — it fires when pytest output shows slow/integration test failures.
-  // Lower confidence because the match is less specific.
   {
     hintId: "err-broad-pytest-slow",
     family: "tool_flag",
     pattern:
       /(?:FAILED|ERROR).*test_(?:integration|slow|heavy)|(?:time\.sleep|Timeout).*(?:30|60)\s*(?:sec|s\b)/i,
     explanation:
-      "You may have run the full test suite including slow integration tests. " +
-      "Scope your test run to the specific test file or use -k to filter.",
-    fixCommand: "pytest -k 'not slow and not integration' tests/",
+      "Slow/integration tests ran. Consider scoping to just the relevant test file " +
+      "or using -k / -m to skip slow markers.",
+    fixCommand: "pytest -k 'not slow and not integration' <test_file>",
     confidence: 0.7,
   },
 
   // --- Generic: missing Python dependency ---
-  // Catch-all for any ModuleNotFoundError (lower confidence than specific ones).
   {
     hintId: "err-generic-missing-module",
     family: "env_dep",
     pattern: /ModuleNotFoundError: No module named ['"]([^'"]+)['"]/i,
     explanation:
-      "A Python module is not installed. Check requirements.txt and requirements-dev.txt, " +
-      "then install the missing dependency.",
-    fixCommand: "pip install <module> (or pip install -r requirements-dev.txt)",
+      "A Python module is missing. Check requirements.txt or requirements-dev.txt.",
+    fixCommand: "pip install -r requirements-dev.txt",
     confidence: 0.6,
   },
 ];
