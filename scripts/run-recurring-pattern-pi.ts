@@ -272,7 +272,8 @@ function resetRepo(repoDir: string): void {
     rmSync(lockPath, { force: true });
   }
   spawnSync("git", ["checkout", "--force", "."], { cwd: repoDir, stdio: "pipe" });
-  spawnSync("git", ["clean", "-fd"], { cwd: repoDir, stdio: "pipe" });
+  // -fdx: also remove ignored files (.venv, .fixtures, .testdata, __pycache__, etc.)
+  spawnSync("git", ["clean", "-fdx"], { cwd: repoDir, stdio: "pipe" });
 }
 
 async function prepareTraceDataDir(options: {
