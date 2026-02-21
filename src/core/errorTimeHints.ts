@@ -177,36 +177,27 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     confidence: 0.95,
   },
 
-  // ═══ SETUP RECIPE HINTS (full sad-path avoidance) ═══
+  // ═══ SETUP RECIPE (fires once on first test-related error) ═══
   //
-  // These fire on the very first error and provide the complete
-  // setup recipe so the agent skips the entire explore→fail→retry loop.
-
-  // --- Generic: pytest not found / not installed ---
+  // One comprehensive hint covering the entire sad-path sequence:
+  //   pytest not found → externally managed → missing deps → missing fixtures
+  // Fires on the FIRST error encountered, provides the FULL recipe.
+  // Deduped by hintId so it only fires once per session.
   {
-    hintId: "err-pytest-not-available",
+    hintId: "err-python-project-setup-recipe",
     family: "tool_flag",
-    pattern: /pytest: command not found|No module named pytest/i,
+    pattern:
+      /pytest: command not found|No module named pytest|externally.managed.environment|test data not found|No such file.*\.fixtures|No such file.*\.testdata/i,
     explanation:
-      "pytest is not installed globally. Create a venv and install dev deps: " +
-      "python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt " +
-      "&& .venv/bin/pytest tests/ -x. " +
-      "Also check for project-specific setup scripts (e.g. executable files in the repo root).",
+      "This project needs setup before tests will run. " +
+      "Standard recipe: (1) python3 -m venv .venv, " +
+      "(2) .venv/bin/pip install -r requirements-dev.txt, " +
+      "(3) check for project-specific setup scripts in the repo root " +
+      "(look for executable files — run them to initialize test fixtures/data), " +
+      "(4) .venv/bin/pytest tests/ -x to run tests. " +
+      "Do NOT use the system python or pip install globally.",
     fixCommand:
       "python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/pytest tests/ -x",
-    confidence: 0.95,
-  },
-
-  // --- Generic: externally managed environment ---
-  {
-    hintId: "err-externally-managed-env",
-    family: "tool_flag",
-    pattern: /externally.managed.environment/i,
-    explanation:
-      "This Python is externally managed (e.g. Homebrew). " +
-      "Create a venv first: python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt",
-    fixCommand:
-      "python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt",
     confidence: 0.95,
   },
 

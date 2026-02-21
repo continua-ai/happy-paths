@@ -81,27 +81,30 @@ describe("HardWiredErrorTimeMatcher", () => {
     });
   });
 
-  describe("setup recipe hints (prevent full sad-path loops)", () => {
+  describe("setup recipe hint (fires once, covers full sad path)", () => {
     it("matches pytest: command not found", () => {
       const hint = matcher.match(
         "/bin/bash: line 1: pytest: command not found",
       );
       expect(hint).not.toBeNull();
-      expect(hint?.hintId).toBe("err-pytest-not-available");
-    });
-
-    it("matches No module named pytest", () => {
-      const hint = matcher.match(
-        "/opt/homebrew/bin/python3.14: No module named pytest",
-      );
-      expect(hint).not.toBeNull();
-      expect(hint?.hintId).toBe("err-pytest-not-available");
+      expect(hint?.hintId).toBe("err-python-project-setup-recipe");
+      expect(hint?.explanation).toContain("python3 -m venv .venv");
+      expect(hint?.explanation).toContain("executable files");
     });
 
     it("matches externally-managed-environment", () => {
       const hint = matcher.match("error: externally-managed-environment");
       expect(hint).not.toBeNull();
-      expect(hint?.hintId).toBe("err-externally-managed-env");
+      expect(hint?.hintId).toBe("err-python-project-setup-recipe");
+    });
+
+    it("matches test data not found", () => {
+      const hint = matcher.match(
+        "Error: test data not found (.fixtures/testdata.json)",
+      );
+      expect(hint).not.toBeNull();
+      // Could match setup recipe OR project-specific hint (setup recipe has priority)
+      expect(hint?.hintId).toBe("err-python-project-setup-recipe");
     });
 
     it("does not match generic missing module", () => {
@@ -148,10 +151,9 @@ describe("DEFAULT_PATTERNS", () => {
     expect(ids).toContain("err-generated-code-missing");
   });
 
-  it("has setup recipe patterns for common sad paths", () => {
+  it("has setup recipe pattern for common sad paths", () => {
     const ids = DEFAULT_PATTERNS.map((p) => p.hintId);
-    expect(ids).toContain("err-pytest-not-available");
-    expect(ids).toContain("err-externally-managed-env");
+    expect(ids).toContain("err-python-project-setup-recipe");
   });
 
   it("every pattern has required fields", () => {
