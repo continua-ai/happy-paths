@@ -1423,6 +1423,936 @@ setup(name="buildkit", version="0.1.0", package_dir={"": "src"}, packages=find_p
 `,
 };
 
+// ─── Experience-only traps (misdirecting errors) ────────────────────────
+
+export const TRAP_PHANTOM_PLUGINS_DEP: RecurringTrap = {
+  trapId: "phantom-plugins-dep",
+  family: "env_dep",
+  description:
+    "conftest.py checks for calclib_plugins package at collection time and calls " +
+    "pytest.exit() if missing. Error says 'pip install calclib-plugins' but the " +
+    "package doesn't exist on PyPI. Fix: create a stub package directory.",
+  errorPattern:
+    "calclib_plugins is not installed|pip install calclib-plugins|calclib\\.internal",
+  fixDescription:
+    "Create stub: mkdir -p calclib_plugins && touch calclib_plugins/__init__.py",
+  fixCommand: "mkdir -p calclib_plugins && touch calclib_plugins/__init__.py",
+};
+
+export const TRAP_SESSION_FIXTURE_TIMEOUT: RecurringTrap = {
+  trapId: "session-fixture-timeout",
+  family: "tool_flag",
+  description:
+    "pyproject.toml addopts includes --timeout=5 but a session-scoped autouse fixture " +
+    "in conftest.py takes 8 seconds for initialization. First test always times out. " +
+    "Error says Timeout >5.0s which looks like the test is slow, but it's the fixture. " +
+    "Fix: pytest --timeout=30 tests/ -x",
+  errorPattern: "Timeout >|Failed: Timeout >|timeout after|FAILED.*Timeout",
+  fixDescription:
+    "Increase timeout to account for slow session fixture: pytest --timeout=30 tests/ -x",
+  fixCommand: "pytest --timeout=30 tests/ -x",
+};
+
+// ─── Repo template: calclib (doctest-modules phantom import trap) ───────
+
+const CALCLIB_FILES: Record<string, string> = {
+  "pyproject.toml": `[project]
+name = "calclib"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+`,
+
+  "requirements.txt": `# Runtime deps
+`,
+
+  "requirements-dev.txt": `pytest>=7.0
+`,
+
+  "calclib/__init__.py": `"""calclib: simple calculation library."""
+`,
+
+  "calclib/arithmetic.py": `"""Core arithmetic operations."""
+
+
+def safe_divide(a: float, b: float, default: float = 0.0) -> float:
+    """Divide a by b, returning default on division by zero.
+
+    BUG: returns default when b == 0 but ALSO when a == 0.
+
+    >>> safe_divide(10, 2)
+    5.0
+    >>> safe_divide(0, 5)
+    0.0
+    """
+    if a == 0 or b == 0:
+        return default
+    return a / b
+
+
+def percentage(part: float, whole: float) -> float:
+    """Calculate what percentage 'part' is of 'whole'.
+
+    BUG: formula is (part / whole) * 10 instead of * 100.
+
+    >>> percentage(1, 4)
+    25.0
+    """
+    if whole == 0:
+        return 0.0
+    return (part / whole) * 10
+
+
+def running_average(values: list[float]) -> list[float]:
+    """Return the running average at each position.
+
+    BUG: divides cumulative sum by total length instead of position index.
+
+    >>> running_average([2, 4, 6])
+    [2.0, 3.0, 4.0]
+    """
+    if not values:
+        return []
+    result = []
+    cumsum = 0.0
+    for val in values:
+        cumsum += val
+        result.append(cumsum / len(values))
+    return result
+
+
+def clamp(value: float, lo: float, hi: float) -> float:
+    """Clamp value to [lo, hi] range.
+
+    BUG: swapped lo/hi comparison — returns hi when value < lo.
+
+    >>> clamp(5, 0, 10)
+    5
+    """
+    if value < lo:
+        return hi
+    if value > hi:
+        return lo
+    return value
+`,
+
+  // *** THE TRAP: this module has a doctest that imports a non-existent package ***
+  "calclib/plugins.py": `"""Optional plugin integration for calclib.
+
+This module provides registration hooks for third-party extensions.
+Plugins are optional and loaded lazily at runtime.
+
+Example (requires calclib_plugins package):
+
+>>> from calclib_plugins import registry
+>>> registry.list_plugins()
+[]
+"""
+
+
+def register_plugin(name: str, func) -> None:
+    """Register a named plugin function.
+
+    Raises RuntimeError if calclib_plugins is not installed.
+    """
+    try:
+        from calclib_plugins import registry
+        registry.add(name, func)
+    except ImportError:
+        raise RuntimeError(
+            f"calclib_plugins is not installed. Cannot register plugin '{name}'."
+        )
+
+
+def has_plugins() -> bool:
+    """Check if the plugins package is available."""
+    try:
+        import calclib_plugins  # noqa: F401
+        return True
+    except ImportError:
+        return False
+`,
+
+  "tests/__init__.py": "",
+
+  "tests/conftest.py": `"""Shared test configuration.
+
+Validates test dependencies before running any tests.
+"""
+import subprocess
+import sys
+
+
+def pytest_configure(config):
+    """Validate test environment at collection time."""
+    # Ensure the internal test helpers package is available.
+    result = subprocess.run(
+        [sys.executable, "-c", "import calclib_plugins"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        import pytest
+
+        pytest.exit(
+            "ERROR: calclib_plugins is not installed.\\n"
+            "Install it with: pip install calclib-plugins\\n"
+            "See https://calclib.internal/wiki/testing for setup.",
+            returncode=4,
+        )
+`,
+
+  "tests/test_arithmetic.py": `"""Tests for calclib.arithmetic."""
+from calclib import arithmetic
+
+
+def test_safe_divide_zero_numerator():
+    """0 / 5 should be 0.0, not the default value."""
+    assert arithmetic.safe_divide(0, 5) == 0.0
+
+
+def test_safe_divide_basic():
+    assert arithmetic.safe_divide(10, 2) == 5.0
+
+
+def test_percentage_basic():
+    """25% calculation."""
+    assert arithmetic.percentage(1, 4) == 25.0
+
+
+def test_percentage_half():
+    assert arithmetic.percentage(1, 2) == 50.0
+
+
+def test_running_average():
+    """Running average of [2, 4, 6] should be [2.0, 3.0, 4.0]."""
+    result = arithmetic.running_average([2, 4, 6])
+    assert result == [2.0, 3.0, 4.0]
+
+
+def test_running_average_single():
+    assert arithmetic.running_average([10]) == [10.0]
+
+
+def test_clamp_below():
+    """Value below range should be clamped to lo, not hi."""
+    assert arithmetic.clamp(-5, 0, 10) == 0
+
+
+def test_clamp_above():
+    assert arithmetic.clamp(15, 0, 10) == 10
+
+
+def test_clamp_in_range():
+    assert arithmetic.clamp(5, 0, 10) == 5
+`,
+
+  "setup.py": `from setuptools import setup, find_packages
+setup(name="calclib", version="0.1.0", packages=find_packages())
+`,
+};
+
+// ─── Repo template: webutil (session fixture timeout trap) ──────────────
+
+const WEBUTIL_FILES: Record<string, string> = {
+  "pyproject.toml": `[project]
+name = "webutil"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+addopts = "--timeout=5 -x"
+testpaths = ["tests"]
+`,
+
+  "requirements.txt": `# Runtime deps
+`,
+
+  "requirements-dev.txt": `pytest>=7.0
+pytest-timeout>=2.0
+`,
+
+  "webutil/__init__.py": `"""webutil: web utility functions."""
+`,
+
+  "webutil/_bootstrap.py": `"""Internal bootstrap for test environment.
+
+This module handles one-time initialization that's expensive but
+required for realistic test behavior (connection pools, caches, etc.).
+"""
+import time
+
+
+def warmup() -> None:
+    """Initialize caches and connection pools.
+
+    This simulates the real startup cost of the production service.
+    In production, this runs once at process start. In tests, it runs
+    once per session via the conftest fixture.
+    """
+    # Simulate connection pool initialization + cache warming
+    time.sleep(8)
+`,
+
+  "webutil/urls.py": `"""URL parsing and manipulation utilities."""
+from urllib.parse import urlparse, urlencode, parse_qs
+
+
+def extract_domain(url: str) -> str:
+    """Extract the domain from a URL.
+
+    BUG: includes the port number in the domain.
+
+    >>> extract_domain("https://example.com:8080/path")
+    'example.com'
+    """
+    parsed = urlparse(url)
+    return parsed.netloc
+
+
+def add_query_params(url: str, params: dict) -> str:
+    """Add query parameters to a URL.
+
+    BUG: overwrites existing query parameters instead of merging.
+
+    >>> add_query_params("https://example.com?a=1", {"b": "2"})
+    'https://example.com?a=1&b=2'
+    """
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(params)}"
+
+
+def normalize_path(path: str) -> str:
+    """Normalize URL path by removing double slashes and trailing slash.
+
+    BUG: only removes one pair of double slashes, not all of them.
+
+    >>> normalize_path("/api//v1///users/")
+    '/api/v1/users'
+    """
+    path = path.replace("//", "/")
+    return path.rstrip("/") or "/"
+
+
+def get_query_param(url: str, key: str, default: str = "") -> str:
+    """Get a single query parameter value.
+
+    BUG: returns the list of values instead of a single string.
+
+    >>> get_query_param("https://example.com?page=5", "page")
+    '5'
+    """
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    return params.get(key, [default])
+`,
+
+  "tests/__init__.py": "",
+
+  "tests/conftest.py": `"""Test configuration and fixtures.
+
+The session fixture handles one-time initialization (connection pools,
+caches) that's required for realistic test behavior.
+"""
+import pytest
+from webutil import _bootstrap
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _init_test_environment():
+    """One-time test environment setup.
+
+    This mirrors the production startup sequence and must complete
+    before any tests run.
+    """
+    _bootstrap.warmup()
+    yield
+    # Teardown would go here
+`,
+
+  "tests/test_urls.py": `"""Tests for webutil.urls."""
+from webutil import urls
+
+
+def test_extract_domain_no_port():
+    """Domain should not include port number."""
+    assert urls.extract_domain("https://example.com:8080/path") == "example.com"
+
+
+def test_extract_domain_simple():
+    assert urls.extract_domain("https://example.com/path") == "example.com"
+
+
+def test_add_query_params_merge():
+    """New params should be merged with existing, not replace them."""
+    result = urls.add_query_params("https://example.com?a=1", {"b": "2"})
+    assert "a=1" in result
+    assert "b=2" in result
+
+
+def test_add_query_params_empty():
+    result = urls.add_query_params("https://example.com", {"key": "val"})
+    assert "key=val" in result
+
+
+def test_normalize_path_multiple_slashes():
+    """All double slashes should be removed, not just the first."""
+    assert urls.normalize_path("/api//v1///users/") == "/api/v1/users"
+
+
+def test_normalize_path_trailing():
+    assert urls.normalize_path("/api/users/") == "/api/users"
+
+
+def test_get_query_param_string():
+    """Should return a string, not a list."""
+    result = urls.get_query_param("https://example.com?page=5", "page")
+    assert result == "5"
+    assert isinstance(result, str)
+
+
+def test_get_query_param_default():
+    result = urls.get_query_param("https://example.com", "missing", "default")
+    assert result == "default"
+`,
+
+  "setup.py": `from setuptools import setup, find_packages
+setup(name="webutil", version="0.1.0", packages=find_packages())
+`,
+};
+
+// ─── Experience-only template definitions ───────────────────────────────
+
+export const CALCLIB_TEMPLATE: RepoTemplate = {
+  templateId: "calclib",
+  name: "calclib",
+  description:
+    "Calculation library with --doctest-modules trap. A module has a doctest importing " +
+    "a non-existent optional package (calclib_plugins). Error misdirects agent to install " +
+    "a package that doesn't exist.",
+  language: "python",
+  files: CALCLIB_FILES,
+  setupCommands: [],
+  traps: [TRAP_PHANTOM_PLUGINS_DEP],
+};
+
+export const WEBUTIL_TEMPLATE: RepoTemplate = {
+  templateId: "webutil",
+  name: "webutil",
+  description:
+    "Web utilities with session fixture timeout trap. A slow session-scoped fixture (8s) " +
+    "plus --timeout=5 in addopts causes the first test to always time out. Error misdirects " +
+    "agent to optimize the test function.",
+  language: "python",
+  files: WEBUTIL_FILES,
+  setupCommands: [],
+  traps: [TRAP_SESSION_FIXTURE_TIMEOUT],
+};
+
+// ─── Experience-only tasks ──────────────────────────────────────────────
+
+export const CALCLIB_TASKS: RecurringPatternTask[] = [
+  {
+    taskId: "calclib-001-safe-divide",
+    repoTemplateId: "calclib",
+    bugDescription: "safe_divide() returns default when numerator is 0",
+    problemStatement: `The \`safe_divide()\` function in \`calclib/arithmetic.py\` returns the default value when the numerator is 0. It should only return default when the denominator is 0. \`safe_divide(0, 5)\` should return 0.0, not the default.
+
+The failing test is \`tests/test_arithmetic.py::test_safe_divide_zero_numerator\`.`,
+    expectedTrapIds: ["phantom-plugins-dep"],
+    verifyCommand:
+      "pytest tests/test_arithmetic.py::test_safe_divide_zero_numerator -x",
+    goldPatch: {
+      "calclib/arithmetic.py": `"""Core arithmetic operations."""
+
+
+def safe_divide(a: float, b: float, default: float = 0.0) -> float:
+    """Divide a by b, returning default on division by zero.
+
+    >>> safe_divide(10, 2)
+    5.0
+    >>> safe_divide(0, 5)
+    0.0
+    """
+    if b == 0:
+        return default
+    return a / b
+
+
+def percentage(part: float, whole: float) -> float:
+    """Calculate what percentage 'part' is of 'whole'.
+
+    BUG: formula is (part / whole) * 10 instead of * 100.
+
+    >>> percentage(1, 4)
+    25.0
+    """
+    if whole == 0:
+        return 0.0
+    return (part / whole) * 10
+
+
+def running_average(values: list[float]) -> list[float]:
+    """Return the running average at each position.
+
+    BUG: divides cumulative sum by total length instead of position index.
+
+    >>> running_average([2, 4, 6])
+    [2.0, 3.0, 4.0]
+    """
+    if not values:
+        return []
+    result = []
+    cumsum = 0.0
+    for val in values:
+        cumsum += val
+        result.append(cumsum / len(values))
+    return result
+
+
+def clamp(value: float, lo: float, hi: float) -> float:
+    """Clamp value to [lo, hi] range.
+
+    BUG: swapped lo/hi comparison — returns hi when value < lo.
+
+    >>> clamp(5, 0, 10)
+    5
+    """
+    if value < lo:
+        return hi
+    if value > hi:
+        return lo
+    return value
+`,
+    },
+  },
+  {
+    taskId: "calclib-002-percentage",
+    repoTemplateId: "calclib",
+    bugDescription: "percentage() multiplies by 10 instead of 100",
+    problemStatement: `The \`percentage()\` function in \`calclib/arithmetic.py\` uses \`* 10\` instead of \`* 100\` in the formula.
+
+The failing test is \`tests/test_arithmetic.py::test_percentage_basic\`.`,
+    expectedTrapIds: ["phantom-plugins-dep"],
+    verifyCommand: "pytest tests/test_arithmetic.py::test_percentage_basic -x",
+    goldPatch: {
+      "calclib/arithmetic.py": `"""Core arithmetic operations."""
+
+
+def safe_divide(a: float, b: float, default: float = 0.0) -> float:
+    """Divide a by b, returning default on division by zero.
+
+    BUG: returns default when b == 0 but ALSO when a == 0.
+
+    >>> safe_divide(10, 2)
+    5.0
+    >>> safe_divide(0, 5)
+    0.0
+    """
+    if a == 0 or b == 0:
+        return default
+    return a / b
+
+
+def percentage(part: float, whole: float) -> float:
+    """Calculate what percentage 'part' is of 'whole'.
+
+    >>> percentage(1, 4)
+    25.0
+    """
+    if whole == 0:
+        return 0.0
+    return (part / whole) * 100
+
+
+def running_average(values: list[float]) -> list[float]:
+    """Return the running average at each position.
+
+    BUG: divides cumulative sum by total length instead of position index.
+
+    >>> running_average([2, 4, 6])
+    [2.0, 3.0, 4.0]
+    """
+    if not values:
+        return []
+    result = []
+    cumsum = 0.0
+    for val in values:
+        cumsum += val
+        result.append(cumsum / len(values))
+    return result
+
+
+def clamp(value: float, lo: float, hi: float) -> float:
+    """Clamp value to [lo, hi] range.
+
+    BUG: swapped lo/hi comparison — returns hi when value < lo.
+
+    >>> clamp(5, 0, 10)
+    5
+    """
+    if value < lo:
+        return hi
+    if value > hi:
+        return lo
+    return value
+`,
+    },
+  },
+  {
+    taskId: "calclib-003-running-avg",
+    repoTemplateId: "calclib",
+    bugDescription: "running_average() divides by total length instead of position",
+    problemStatement: `The \`running_average()\` function in \`calclib/arithmetic.py\` divides the cumulative sum by \`len(values)\` (total) instead of the current position index. For \`[2, 4, 6]\`, it should return \`[2.0, 3.0, 4.0]\`, not \`[0.67, 2.0, 4.0]\`.
+
+The failing test is \`tests/test_arithmetic.py::test_running_average\`.`,
+    expectedTrapIds: ["phantom-plugins-dep"],
+    verifyCommand: "pytest tests/test_arithmetic.py::test_running_average -x",
+    goldPatch: {
+      "calclib/arithmetic.py": `"""Core arithmetic operations."""
+
+
+def safe_divide(a: float, b: float, default: float = 0.0) -> float:
+    """Divide a by b, returning default on division by zero.
+
+    BUG: returns default when b == 0 but ALSO when a == 0.
+
+    >>> safe_divide(10, 2)
+    5.0
+    >>> safe_divide(0, 5)
+    0.0
+    """
+    if a == 0 or b == 0:
+        return default
+    return a / b
+
+
+def percentage(part: float, whole: float) -> float:
+    """Calculate what percentage 'part' is of 'whole'.
+
+    BUG: formula is (part / whole) * 10 instead of * 100.
+
+    >>> percentage(1, 4)
+    25.0
+    """
+    if whole == 0:
+        return 0.0
+    return (part / whole) * 10
+
+
+def running_average(values: list[float]) -> list[float]:
+    """Return the running average at each position.
+
+    >>> running_average([2, 4, 6])
+    [2.0, 3.0, 4.0]
+    """
+    if not values:
+        return []
+    result = []
+    cumsum = 0.0
+    for i, val in enumerate(values, 1):
+        cumsum += val
+        result.append(cumsum / i)
+    return result
+
+
+def clamp(value: float, lo: float, hi: float) -> float:
+    """Clamp value to [lo, hi] range.
+
+    BUG: swapped lo/hi comparison — returns hi when value < lo.
+
+    >>> clamp(5, 0, 10)
+    5
+    """
+    if value < lo:
+        return hi
+    if value > hi:
+        return lo
+    return value
+`,
+    },
+  },
+  {
+    taskId: "calclib-004-clamp",
+    repoTemplateId: "calclib",
+    bugDescription: "clamp() returns hi when value is below lo",
+    problemStatement: `The \`clamp()\` function in \`calclib/arithmetic.py\` returns \`hi\` when \`value < lo\` and \`lo\` when \`value > hi\` — the returns are swapped. \`clamp(-5, 0, 10)\` should return 0, not 10.
+
+The failing test is \`tests/test_arithmetic.py::test_clamp_below\`.`,
+    expectedTrapIds: ["phantom-plugins-dep"],
+    verifyCommand: "pytest tests/test_arithmetic.py::test_clamp_below -x",
+    goldPatch: {
+      "calclib/arithmetic.py": `"""Core arithmetic operations."""
+
+
+def safe_divide(a: float, b: float, default: float = 0.0) -> float:
+    """Divide a by b, returning default on division by zero.
+
+    BUG: returns default when b == 0 but ALSO when a == 0.
+
+    >>> safe_divide(10, 2)
+    5.0
+    >>> safe_divide(0, 5)
+    0.0
+    """
+    if a == 0 or b == 0:
+        return default
+    return a / b
+
+
+def percentage(part: float, whole: float) -> float:
+    """Calculate what percentage 'part' is of 'whole'.
+
+    BUG: formula is (part / whole) * 10 instead of * 100.
+
+    >>> percentage(1, 4)
+    25.0
+    """
+    if whole == 0:
+        return 0.0
+    return (part / whole) * 10
+
+
+def running_average(values: list[float]) -> list[float]:
+    """Return the running average at each position.
+
+    BUG: divides cumulative sum by total length instead of position index.
+
+    >>> running_average([2, 4, 6])
+    [2.0, 3.0, 4.0]
+    """
+    if not values:
+        return []
+    result = []
+    cumsum = 0.0
+    for val in values:
+        cumsum += val
+        result.append(cumsum / len(values))
+    return result
+
+
+def clamp(value: float, lo: float, hi: float) -> float:
+    """Clamp value to [lo, hi] range.
+
+    >>> clamp(5, 0, 10)
+    5
+    """
+    if value < lo:
+        return lo
+    if value > hi:
+        return hi
+    return value
+`,
+    },
+  },
+];
+
+export const WEBUTIL_TASKS: RecurringPatternTask[] = [
+  {
+    taskId: "webutil-001-domain-port",
+    repoTemplateId: "webutil",
+    bugDescription: "extract_domain() includes port number",
+    problemStatement: `The \`extract_domain()\` function in \`webutil/urls.py\` returns the full netloc including port. \`extract_domain("https://example.com:8080/path")\` should return \`"example.com"\`, not \`"example.com:8080"\`.
+
+The failing test is \`tests/test_urls.py::test_extract_domain_no_port\`.`,
+    expectedTrapIds: ["session-fixture-timeout"],
+    verifyCommand: "pytest tests/test_urls.py::test_extract_domain_no_port -x",
+    goldPatch: {
+      "webutil/urls.py": `"""URL parsing and manipulation utilities."""
+from urllib.parse import urlparse, urlencode, parse_qs
+
+
+def extract_domain(url: str) -> str:
+    """Extract the domain from a URL (without port)."""
+    parsed = urlparse(url)
+    return parsed.hostname or ""
+
+
+def add_query_params(url: str, params: dict) -> str:
+    """Add query parameters to a URL.
+
+    BUG: overwrites existing query parameters instead of merging.
+    """
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(params)}"
+
+
+def normalize_path(path: str) -> str:
+    """Normalize URL path by removing double slashes and trailing slash.
+
+    BUG: only removes one pair of double slashes, not all of them.
+    """
+    path = path.replace("//", "/")
+    return path.rstrip("/") or "/"
+
+
+def get_query_param(url: str, key: str, default: str = "") -> str:
+    """Get a single query parameter value.
+
+    BUG: returns the list of values instead of a single string.
+    """
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    return params.get(key, [default])
+`,
+    },
+  },
+  {
+    taskId: "webutil-002-query-merge",
+    repoTemplateId: "webutil",
+    bugDescription: "add_query_params() overwrites existing params",
+    problemStatement: `The \`add_query_params()\` function in \`webutil/urls.py\` replaces existing query parameters instead of merging. For URL \`"https://example.com?a=1"\` with params \`{"b": "2"}\`, the result should contain both \`a=1\` and \`b=2\`.
+
+The failing test is \`tests/test_urls.py::test_add_query_params_merge\`.`,
+    expectedTrapIds: ["session-fixture-timeout"],
+    verifyCommand: "pytest tests/test_urls.py::test_add_query_params_merge -x",
+    goldPatch: {
+      "webutil/urls.py": `"""URL parsing and manipulation utilities."""
+from urllib.parse import urlparse, urlencode, parse_qs, parse_qsl, urlunparse
+
+
+def extract_domain(url: str) -> str:
+    """Extract the domain from a URL.
+
+    BUG: includes the port number in the domain.
+    """
+    parsed = urlparse(url)
+    return parsed.netloc
+
+
+def add_query_params(url: str, params: dict) -> str:
+    """Add query parameters to a URL, merging with existing."""
+    parsed = urlparse(url)
+    existing = dict(parse_qsl(parsed.query))
+    existing.update(params)
+    new_query = urlencode(existing)
+    return urlunparse(parsed._replace(query=new_query))
+
+
+def normalize_path(path: str) -> str:
+    """Normalize URL path by removing double slashes and trailing slash.
+
+    BUG: only removes one pair of double slashes, not all of them.
+    """
+    path = path.replace("//", "/")
+    return path.rstrip("/") or "/"
+
+
+def get_query_param(url: str, key: str, default: str = "") -> str:
+    """Get a single query parameter value.
+
+    BUG: returns the list of values instead of a single string.
+    """
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    return params.get(key, [default])
+`,
+    },
+  },
+  {
+    taskId: "webutil-003-normalize-slashes",
+    repoTemplateId: "webutil",
+    bugDescription: "normalize_path() only removes one pair of double slashes",
+    problemStatement: `The \`normalize_path()\` function in \`webutil/urls.py\` uses \`.replace("//", "/")\` which only handles one pair. For \`"/api//v1///users/"\`, it should return \`"/api/v1/users"\` but it leaves some double slashes.
+
+The failing test is \`tests/test_urls.py::test_normalize_path_multiple_slashes\`.`,
+    expectedTrapIds: ["session-fixture-timeout"],
+    verifyCommand: "pytest tests/test_urls.py::test_normalize_path_multiple_slashes -x",
+    goldPatch: {
+      "webutil/urls.py": `"""URL parsing and manipulation utilities."""
+from urllib.parse import urlparse, urlencode, parse_qs
+import re
+
+
+def extract_domain(url: str) -> str:
+    """Extract the domain from a URL.
+
+    BUG: includes the port number in the domain.
+    """
+    parsed = urlparse(url)
+    return parsed.netloc
+
+
+def add_query_params(url: str, params: dict) -> str:
+    """Add query parameters to a URL.
+
+    BUG: overwrites existing query parameters instead of merging.
+    """
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(params)}"
+
+
+def normalize_path(path: str) -> str:
+    """Normalize URL path by removing double slashes and trailing slash."""
+    path = re.sub(r"/+", "/", path)
+    return path.rstrip("/") or "/"
+
+
+def get_query_param(url: str, key: str, default: str = "") -> str:
+    """Get a single query parameter value.
+
+    BUG: returns the list of values instead of a single string.
+    """
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    return params.get(key, [default])
+`,
+    },
+  },
+  {
+    taskId: "webutil-004-query-param-type",
+    repoTemplateId: "webutil",
+    bugDescription: "get_query_param() returns a list instead of string",
+    problemStatement: `The \`get_query_param()\` function in \`webutil/urls.py\` returns the raw \`parse_qs\` list instead of extracting the first value. For URL \`"https://example.com?page=5"\`, it should return \`"5"\` (str), not \`["5"]\` (list).
+
+The failing test is \`tests/test_urls.py::test_get_query_param_string\`.`,
+    expectedTrapIds: ["session-fixture-timeout"],
+    verifyCommand: "pytest tests/test_urls.py::test_get_query_param_string -x",
+    goldPatch: {
+      "webutil/urls.py": `"""URL parsing and manipulation utilities."""
+from urllib.parse import urlparse, urlencode, parse_qs
+
+
+def extract_domain(url: str) -> str:
+    """Extract the domain from a URL.
+
+    BUG: includes the port number in the domain.
+    """
+    parsed = urlparse(url)
+    return parsed.netloc
+
+
+def add_query_params(url: str, params: dict) -> str:
+    """Add query parameters to a URL.
+
+    BUG: overwrites existing query parameters instead of merging.
+    """
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(params)}"
+
+
+def normalize_path(path: str) -> str:
+    """Normalize URL path by removing double slashes and trailing slash.
+
+    BUG: only removes one pair of double slashes, not all of them.
+    """
+    path = path.replace("//", "/")
+    return path.rstrip("/") or "/"
+
+
+def get_query_param(url: str, key: str, default: str = "") -> str:
+    """Get a single query parameter value."""
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query)
+    values = params.get(key, [default])
+    return values[0] if values else default
+`,
+    },
+  },
+];
+
 // ─── Hard-trap template definitions ─────────────────────────────────────
 
 export const TASKAPI_TEMPLATE: RepoTemplate = {
@@ -2084,6 +3014,8 @@ export const ALL_TEMPLATES: RepoTemplate[] = [
   DATAPROC_TEMPLATE,
   TASKAPI_TEMPLATE,
   BUILDKIT_TEMPLATE,
+  CALCLIB_TEMPLATE,
+  WEBUTIL_TEMPLATE,
 ];
 
 /** All tasks. */
@@ -2092,6 +3024,8 @@ export const ALL_TASKS: RecurringPatternTask[] = [
   ...DATAPROC_TASKS,
   ...TASKAPI_TASKS,
   ...BUILDKIT_TASKS,
+  ...CALCLIB_TASKS,
+  ...WEBUTIL_TASKS,
 ];
 
 /** All unique traps. */
@@ -2107,4 +3041,6 @@ export const ALL_TRAPS: RecurringTrap[] = [
   TRAP_CUSTOM_DEV_CLI,
   TRAP_BUILD_BEFORE_TEST,
   TRAP_CUSTOM_BUILD_TOOL,
+  TRAP_PHANTOM_PLUGINS_DEP,
+  TRAP_SESSION_FIXTURE_TIMEOUT,
 ];

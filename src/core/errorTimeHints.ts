@@ -177,6 +177,34 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     confidence: 0.95,
   },
 
+  // ═══ EXPERIENCE-ONLY TRAPS (misdirecting errors) ═══
+
+  // --- env_dep: phantom plugins package (not on PyPI) ---
+  {
+    hintId: "err-phantom-plugins-dep",
+    family: "env_dep",
+    pattern:
+      /calclib_plugins is not installed|pip install calclib-plugins|No module named.*calclib_plugins/i,
+    explanation:
+      "calclib_plugins doesn't exist on PyPI — it's a phantom dependency in conftest.py. " +
+      "Create a stub package directory so the import check passes.",
+    fixCommand: "mkdir -p calclib_plugins && touch calclib_plugins/__init__.py",
+    confidence: 0.95,
+  },
+
+  // --- tool_flag: test timeout from slow session fixture ---
+  {
+    hintId: "err-session-fixture-timeout",
+    family: "tool_flag",
+    pattern: /(?:Failed: Timeout >|Timeout >[\d.]+s|FAILED.*Timeout)/i,
+    explanation:
+      "This timeout may be from a slow session-scoped fixture in conftest.py, " +
+      "not from the test itself. Check conftest.py for session fixtures, " +
+      "or increase the timeout.",
+    fixCommand: "pytest --timeout=30 tests/ -x",
+    confidence: 0.85,
+  },
+
   // ═══ MEDIUM TRAPS (common but models sometimes struggle) ═══
 
   // --- env_dep: missing pytest-cov ---
