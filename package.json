@@ -47,6 +47,8 @@
     "benchmark:swebench-lite:pi": "tsx scripts/run-swebench-lite-pi.ts",
     "benchmark:swebench-lite:canonicalize-traces": "tsx scripts/canonicalize-swebench-traces.ts",
     "benchmark:swebench-lite:lane": "tsx scripts/run-swebench-lite-lane.ts",
+    "benchmark:rp:build": "tsx scripts/build-recurring-pattern-benchmark.ts",
+    "benchmark:rp:pi": "tsx scripts/run-recurring-pattern-pi.ts",
     "typecheck": "tsc --noEmit",
     "verify": "biome check . && tsc --noEmit && vitest run",
     "verify:ci": "biome check . && tsc --noEmit && vitest run && npm run guardrails"

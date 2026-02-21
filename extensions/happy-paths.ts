@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import {
+  HardWiredErrorTimeMatcher,
   type PiLikeApi,
   type TraceScope,
   createLocalLearningLoop,
@@ -132,6 +133,14 @@ export default function happyPathsPiExtension(pi: PiLikeApi): void {
     }
   });
 
+  // Error-time hint matcher: intercepts tool_result errors and injects fixes.
+  // Enabled when HAPPY_PATHS_ERROR_TIME_HINTS is not "off".
+  const errorTimeHintsEnabled =
+    (process.env.HAPPY_PATHS_ERROR_TIME_HINTS ?? "").trim().toLowerCase() !== "off";
+  const errorTimeHintMatcher = errorTimeHintsEnabled
+    ? new HardWiredErrorTimeMatcher()
+    : undefined;
+
   createPiTraceExtension({
     loop: ingestLoop,
     retrievalLoop,
@@ -139,5 +148,6 @@ export default function happyPathsPiExtension(pi: PiLikeApi): void {
     sessionId,
     maxSuggestions,
     hintMode,
+    errorTimeHintMatcher,
   })(pi);
 }

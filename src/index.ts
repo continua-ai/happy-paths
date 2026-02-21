@@ -19,6 +19,7 @@ export * from "./core/trajectoryCalibration.js";
 export * from "./core/trajectoryCalibrationReview.js";
 export * from "./core/trajectoryCalibrationAdjudication.js";
 export * from "./core/familyDisjointLane.js";
+export * from "./core/errorTimeHints.js";
 
 export * from "./backends/local/index.js";
 
@@ -27,3 +28,4 @@ export * from "./adapters/pi/extension.js";
 
 export * from "./benchmarks/swebenchLite.js";
 export * from "./benchmarks/swebenchTrajectory.js";
+export * from "./benchmarks/recurringPattern.js";

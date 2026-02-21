@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import type { ErrorTimeHint, ErrorTimeHintMatcher } from "../../core/errorTimeHints.js";
+import { formatErrorTimeHint } from "../../core/errorTimeHints.js";
 import type { LearningLoop } from "../../core/learningLoop.js";
 import {
   type ProjectIdentityOverrides,
@@ -53,6 +55,8 @@ export interface PiTraceExtensionOptions {
   suggestionTotalTimeoutMs?: number;
   customMessageType?: string;
   projectIdentity?: ProjectIdentityOverrides;
+  /** Error-time hint matcher for tool_result interception. */
+  errorTimeHintMatcher?: ErrorTimeHintMatcher;
 }
 
 function nowIso(): string {
@@ -1258,12 +1262,15 @@ export function createPiTraceExtension(
   const projectIdentity = resolveProjectIdentity(options.projectIdentity);
   const customMessageType =
     options.customMessageType ?? projectIdentity.extensionCustomType;
+  const errorTimeHintMatcher = options.errorTimeHintMatcher ?? null;
 
   const sessionId = options.sessionId ?? randomUUID();
   const turnStartTimes = new Map<number, number>();
   const toolCalls = new Map<string, ToolCallState>();
+  const errorTimeHintsFired = new Set<string>();
   let latestUserInputEventId: string | null = null;
   let hintPolicyMemoryPromise: Promise<HintPolicyMemory> | null = null;
+  let errorTimeHintTotalCount = 0;
 
   async function getHintPolicyMemory(): Promise<HintPolicyMemory> {
     if (retrievalMemoryMode === "live") {
@@ -1368,6 +1375,51 @@ export function createPiTraceExtension(
           outcome: isError ? "failure" : "success",
         },
       });
+
+      // Error-time hint interception: match error text → inject fix hint.
+      if (!isError || !errorTimeHintMatcher || !text) {
+        return undefined;
+      }
+
+      const hint = errorTimeHintMatcher.match(text);
+      if (!hint) {
+        return undefined;
+      }
+
+      // Dedup: don't fire the same hint ID more than once per session.
+      if (errorTimeHintsFired.has(hint.hintId)) {
+        return undefined;
+      }
+      errorTimeHintsFired.add(hint.hintId);
+      errorTimeHintTotalCount += 1;
+
+      // Log a checkpoint for analysis.
+      await ingest({
+        type: "checkpoint",
+        payload: {
+          kind: "happy_paths_error_time_hint",
+          hintId: hint.hintId,
+          hintFamily: hint.family,
+          matchedPattern: hint.matchedPattern,
+          matchedText: hint.matchedText.slice(0, 200),
+          explanation: hint.explanation,
+          fixCommand: hint.fixCommand,
+          confidence: hint.confidence,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          command: call ? commandFromInput(call.input) : undefined,
+          errorTimeHintTotalCount,
+          sessionHintsFiredCount: errorTimeHintsFired.size,
+        },
+        tags: ["happy_paths", "error_time_hint"],
+      });
+
+      // Append the hint to the tool result content the LLM sees.
+      const hintText = formatErrorTimeHint(hint);
+      const existingContent = event.content ?? [];
+      return {
+        content: [...existingContent, { type: "text" as const, text: hintText }],
+      };
     });
 
     pi.on("turn_start", (rawEvent) => {
