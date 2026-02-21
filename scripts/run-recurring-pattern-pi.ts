@@ -360,14 +360,23 @@ async function runVariant(options: {
     options.extensionPath,
   ];
 
-  if (options.provider) {
-    piArgs.push("--provider", options.provider);
-  }
-  if (options.model) {
-    piArgs.push("--model", options.model);
-  }
-  if (options.thinking) {
-    piArgs.push("--thinking", options.thinking);
+  // Use "provider/model" format to lock the model and prevent Pi from
+  // falling back to a different provider (e.g. haiku) on rate limits.
+  if (options.provider && options.model) {
+    const modelSpec = options.thinking
+      ? `${options.provider}/${options.model}:${options.thinking}`
+      : `${options.provider}/${options.model}`;
+    piArgs.push("--model", modelSpec);
+  } else {
+    if (options.provider) {
+      piArgs.push("--provider", options.provider);
+    }
+    if (options.model) {
+      piArgs.push("--model", options.model);
+    }
+    if (options.thinking) {
+      piArgs.push("--thinking", options.thinking);
+    }
   }
 
   piArgs.push(`@${promptPath}`);
