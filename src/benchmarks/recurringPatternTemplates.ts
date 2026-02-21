@@ -821,11 +821,1278 @@ def read_text(content: bytes, encoding: str = "utf-8") -> str:
   },
 ];
 
+// ─── Hard traps (internal tooling / company-specific) ───────────────────
+
+export const TRAP_INTERNAL_VENDOR_DEP: RecurringTrap = {
+  trapId: "internal-vendor-dep",
+  family: "env_dep",
+  description:
+    "The project depends on an internal package (authlib_internal) that is NOT on PyPI. " +
+    "It must be installed from the vendor/ directory: pip install vendor/authlib_internal. " +
+    "Running pip install authlib-internal will fail with 'No matching distribution found'.",
+  errorPattern:
+    "ModuleNotFoundError.*authlib_internal|No matching distribution.*authlib.internal",
+  fixDescription:
+    "Install the internal package from vendor/: pip install vendor/authlib_internal",
+  fixCommand: "pip install vendor/authlib_internal",
+};
+
+export const TRAP_MISSING_TEST_ENV: RecurringTrap = {
+  trapId: "missing-test-env",
+  family: "config",
+  description:
+    "Tests require env vars (TASKAPI_DB_URL etc.) that are defined in .env.test. " +
+    "Running pytest directly without sourcing .env.test fails with KeyError.",
+  errorPattern: "KeyError.*TASKAPI_DB_URL|TASKAPI_DB_URL.*not set",
+  fixDescription: "Source the test env file before running tests: source .env.test",
+  fixCommand: "source .env.test",
+};
+
+export const TRAP_CUSTOM_DEV_CLI: RecurringTrap = {
+  trapId: "custom-dev-cli",
+  family: "tool_flag",
+  description:
+    "This project uses a custom ./dev CLI for all dev workflows. " +
+    "Running bare pytest misses env setup, vendor deps, and editable install.",
+  errorPattern: "ModuleNotFoundError|KeyError|ImportError",
+  fixDescription: "Use the project's dev CLI: ./dev test",
+  fixCommand: "./dev test",
+};
+
+export const TRAP_BUILD_BEFORE_TEST: RecurringTrap = {
+  trapId: "build-before-test",
+  family: "tool_flag",
+  description:
+    "Tests import from buildkit.generated.schema which is auto-generated. " +
+    "Running tests without building first fails with ModuleNotFoundError.",
+  errorPattern:
+    "ModuleNotFoundError.*buildkit\\.generated\\.schema|cannot import name.*from.*buildkit\\.generated",
+  fixDescription: "Run the build step first: ./proj build",
+  fixCommand: "./proj build",
+};
+
+export const TRAP_CUSTOM_BUILD_TOOL: RecurringTrap = {
+  trapId: "custom-build-tool",
+  family: "tool_flag",
+  description:
+    "This project uses a custom ./proj CLI for build/test. " +
+    "Standard commands (make, npm, python setup.py) won't work.",
+  errorPattern: "No rule to make target|npm ERR!|command not found",
+  fixDescription: "Use the project's build tool: ./proj build && ./proj test",
+  fixCommand: "./proj build && ./proj test",
+};
+
+// ─── Repo template: taskapi (internal dev CLI + vendor dep + env vars) ──
+
+const TASKAPI_FILES: Record<string, string> = {
+  "README.md": `# TaskAPI
+
+Internal task management microservice.
+
+## Development
+
+This project uses a custom dev CLI. Do NOT run pytest directly.
+
+\`\`\`bash
+# First time setup (creates venv, installs deps including internal packages):
+./dev setup
+
+# Run tests:
+./dev test
+
+# Run a specific test:
+./dev test -- tests/test_tasks.py::test_filter_overdue_excludes_cutoff -x
+
+# Lint:
+./dev lint
+\`\`\`
+
+### Internal dependencies
+
+\`authlib_internal\` is an internal auth library. It is NOT on PyPI.
+It is bundled in \`vendor/authlib_internal/\` and installed by \`./dev setup\`.
+
+### Environment
+
+Test env vars are in \`.env.test\`. The \`./dev test\` command sources this automatically.
+`,
+
+  dev: `#!/usr/bin/env bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+case "\${1:-help}" in
+  setup)
+    python3 -m venv .venv
+    .venv/bin/pip install -q -r requirements.txt
+    .venv/bin/pip install -q -r requirements-dev.txt
+    .venv/bin/pip install -q vendor/authlib_internal
+    .venv/bin/pip install -q -e .
+    echo "Setup complete. Run './dev test' to run tests."
+    ;;
+  test)
+    if [ ! -d .venv ]; then
+      echo "Run './dev setup' first." >&2
+      exit 1
+    fi
+    set -a; source .env.test; set +a
+    shift
+    if [ $# -gt 0 ] && [ "$1" = "--" ]; then shift; fi
+    .venv/bin/pytest "\${@:-tests/}" -x -q
+    ;;
+  lint)
+    .venv/bin/ruff check src/ tests/ || true
+    ;;
+  *)
+    echo "Usage: ./dev {setup|test|lint}"
+    echo ""
+    echo "  setup   Create venv, install all deps (including internal packages)"
+    echo "  test    Run tests with proper env vars"
+    echo "  lint    Run linter"
+    exit 1
+    ;;
+esac
+`,
+
+  "pyproject.toml": `[project]
+name = "taskapi"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+`,
+
+  "requirements.txt": `# Runtime deps
+`,
+
+  "requirements-dev.txt": `pytest>=7.0
+`,
+
+  ".env.test": `TASKAPI_DB_URL=sqlite:///test.db
+TASKAPI_SECRET=test-secret-do-not-use-in-prod
+TASKAPI_LOG_LEVEL=DEBUG
+`,
+
+  // Internal vendor package
+  "vendor/authlib_internal/pyproject.toml": `[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "authlib-internal"
+version = "1.0.0"
+`,
+
+  "vendor/authlib_internal/authlib_internal/__init__.py": `"""Internal auth library (not on PyPI)."""
+from authlib_internal.tokens import verify_token, decode_token
+
+__all__ = ["verify_token", "decode_token"]
+`,
+
+  "vendor/authlib_internal/authlib_internal/tokens.py": `"""Token validation for internal services."""
+
+_VALID_PREFIXES = ("tk_test_", "tk_prod_", "tk_staging_")
+
+
+def verify_token(token: str) -> bool:
+    """Check if a token has a valid prefix."""
+    return any(token.startswith(p) for p in _VALID_PREFIXES)
+
+
+def decode_token(token: str) -> dict:
+    """Decode a token into its parts."""
+    if not verify_token(token):
+        raise ValueError(f"Invalid token: {token}")
+    parts = token.split("_", 2)
+    return {"env": parts[1], "payload": parts[2] if len(parts) > 2 else ""}
+`,
+
+  "src/taskapi/__init__.py": `"""TaskAPI: internal task management."""
+`,
+
+  "src/taskapi/config.py": `"""Configuration (reads from environment)."""
+import os
+
+
+def get_db_url() -> str:
+    """Return database URL from environment."""
+    return os.environ["TASKAPI_DB_URL"]
+
+
+def get_secret() -> str:
+    """Return app secret from environment."""
+    return os.environ["TASKAPI_SECRET"]
+`,
+
+  "src/taskapi/auth.py": `"""Auth helpers using internal authlib."""
+from authlib_internal import verify_token, decode_token
+
+
+def authenticate_request(headers: dict) -> dict | None:
+    """Validate the Authorization header and return decoded token, or None."""
+    auth = headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    token = auth[len("Bearer "):]
+    if not verify_token(token):
+        return None
+    return decode_token(token)
+`,
+
+  "src/taskapi/tasks.py": `"""Task management business logic."""
+from taskapi import config
+
+
+def filter_overdue(tasks: list[dict], cutoff_date: str) -> list[dict]:
+    """Return tasks whose due_date is strictly before cutoff_date (YYYY-MM-DD).
+
+    BUG: uses <= instead of <, so tasks due ON the cutoff are included.
+    """
+    # Touch config to ensure env is loaded (used in production for audit logging)
+    _ = config.get_db_url()
+    return [t for t in tasks if t.get("due_date", "") <= cutoff_date]
+
+
+def sort_by_priority(tasks: list[dict]) -> list[dict]:
+    """Sort tasks by priority: critical > high > medium > low.
+
+    BUG: sorts descending (low first) instead of ascending (critical first).
+    """
+    priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    return sorted(
+        tasks,
+        key=lambda t: priority_order.get(t.get("priority", "low"), 99),
+        reverse=True,
+    )
+
+
+def summarize_by_status(tasks: list[dict]) -> dict[str, int]:
+    """Count tasks grouped by status.
+
+    BUG: skips tasks with no 'status' key instead of counting as 'unknown'.
+    """
+    counts: dict[str, int] = {}
+    for t in tasks:
+        if "status" not in t:
+            continue
+        status = t["status"]
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def merge_duplicates(tasks: list[dict]) -> list[dict]:
+    """Merge tasks with same title, keeping the earliest due_date.
+
+    BUG: keeps the latest due_date instead of the earliest.
+    """
+    seen: dict[str, dict] = {}
+    for t in tasks:
+        title = t["title"]
+        if title not in seen:
+            seen[title] = dict(t)
+        else:
+            existing = seen[title]
+            if t.get("due_date", "") > existing.get("due_date", ""):
+                existing["due_date"] = t["due_date"]
+    return list(seen.values())
+`,
+
+  "tests/__init__.py": "",
+
+  "tests/conftest.py": `"""Test configuration.
+
+IMPORTANT: Tests require:
+1. Internal authlib_internal package (install from vendor/)
+2. Environment variables from .env.test
+Use ./dev test to run tests with proper setup.
+"""
+import authlib_internal  # noqa: F401 — validates vendor dep is installed
+import os
+
+# Validate test environment is configured
+_db_url = os.environ["TASKAPI_DB_URL"]
+`,
+
+  "tests/test_tasks.py": `"""Tests for taskapi.tasks."""
+from taskapi import tasks
+
+
+def test_filter_overdue_excludes_cutoff():
+    """Tasks due ON the cutoff should NOT be in the overdue list."""
+    data = [
+        {"title": "A", "due_date": "2024-01-14"},
+        {"title": "B", "due_date": "2024-01-15"},
+        {"title": "C", "due_date": "2024-01-16"},
+    ]
+    result = tasks.filter_overdue(data, "2024-01-15")
+    titles = [t["title"] for t in result]
+    assert titles == ["A"], f"Expected only A, got {titles}"
+
+
+def test_sort_by_priority_critical_first():
+    """Critical tasks should come before low-priority tasks."""
+    data = [
+        {"title": "Low", "priority": "low"},
+        {"title": "Critical", "priority": "critical"},
+        {"title": "High", "priority": "high"},
+    ]
+    result = tasks.sort_by_priority(data)
+    assert result[0]["title"] == "Critical"
+    assert result[-1]["title"] == "Low"
+
+
+def test_summarize_missing_status():
+    """Tasks with no status key should be counted as 'unknown'."""
+    data = [
+        {"title": "A", "status": "done"},
+        {"title": "B"},
+        {"title": "C", "status": "done"},
+    ]
+    result = tasks.summarize_by_status(data)
+    assert result == {"done": 2, "unknown": 1}
+
+
+def test_merge_keeps_earliest_due_date():
+    """When merging duplicates, keep the earliest due_date."""
+    data = [
+        {"title": "Deploy", "due_date": "2024-03-01"},
+        {"title": "Deploy", "due_date": "2024-01-15"},
+        {"title": "Deploy", "due_date": "2024-06-01"},
+    ]
+    result = tasks.merge_duplicates(data)
+    assert len(result) == 1
+    assert result[0]["due_date"] == "2024-01-15"
+`,
+
+  "setup.py": `from setuptools import setup, find_packages
+setup(name="taskapi", version="0.1.0", package_dir={"": "src"}, packages=find_packages("src"))
+`,
+};
+
+// ─── Repo template: buildkit (custom build tool + code generation) ──────
+
+const BUILDKIT_FILES: Record<string, string> = {
+  "README.md": `# BuildKit
+
+Data pipeline with schema code generation.
+
+## Development
+
+This project uses a custom \`./proj\` CLI for build and test.
+
+\`\`\`bash
+# Build (generates code from templates — required before tests):
+./proj build
+
+# Run tests (builds first, then runs pytest):
+./proj test
+
+# Run a specific test:
+./proj test -- tests/test_pipeline.py::test_validate_required_fields -x
+\`\`\`
+
+### Code generation
+
+\`src/buildkit/generated/schema.py\` is auto-generated by \`./proj build\`
+from \`templates/schema.py.template\`. Do NOT edit it manually.
+If it's missing, tests will fail with ModuleNotFoundError.
+`,
+
+  proj: `#!/usr/bin/env bash
+set -e
+
+PROJ_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$PROJ_DIR"
+
+ensure_venv() {
+  if [ ! -d .venv ]; then
+    python3 -m venv .venv
+    .venv/bin/pip install -q -r requirements.txt
+    .venv/bin/pip install -q -r requirements-dev.txt
+    .venv/bin/pip install -q -e .
+  fi
+}
+
+case "\${1:-help}" in
+  build)
+    mkdir -p src/buildkit/generated
+    cp templates/schema.py.template src/buildkit/generated/schema.py
+    touch src/buildkit/generated/__init__.py
+    echo "Build complete. Generated src/buildkit/generated/schema.py"
+    ;;
+  test)
+    ensure_venv
+    "$0" build
+    shift
+    if [ $# -gt 0 ] && [ "$1" = "--" ]; then shift; fi
+    .venv/bin/pytest "\${@:-tests/}" -x -q
+    ;;
+  clean)
+    rm -rf src/buildkit/generated/schema.py
+    echo "Cleaned generated files."
+    ;;
+  *)
+    echo "Usage: ./proj {build|test|clean}"
+    echo ""
+    echo "  build   Generate code from templates (required before tests)"
+    echo "  test    Build + run tests"
+    echo "  clean   Remove generated files"
+    exit 1
+    ;;
+esac
+`,
+
+  "pyproject.toml": `[project]
+name = "buildkit"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+`,
+
+  "requirements.txt": `# Runtime deps
+`,
+
+  "requirements-dev.txt": `pytest>=7.0
+`,
+
+  // Template file that ./proj build copies to generated/
+  "templates/schema.py.template": `\"\"\"Auto-generated schema definitions. Do NOT edit manually.
+Regenerate with: ./proj build
+\"\"\"
+
+TABLES = {
+    "tasks": ["id", "title", "status", "priority", "due_date", "assignee"],
+    "users": ["id", "name", "email", "role"],
+    "comments": ["id", "task_id", "user_id", "body", "created_at"],
+}
+
+VALID_STATUSES = ("todo", "in_progress", "review", "done", "archived")
+VALID_PRIORITIES = ("critical", "high", "medium", "low")
+REQUIRED_TASK_FIELDS = ("title", "status")
+MAX_TITLE_LENGTH = 200
+`,
+
+  "src/buildkit/__init__.py": `"""BuildKit: data pipeline with code generation."""
+`,
+
+  // generated/ exists as a package but schema.py is MISSING until ./proj build
+  "src/buildkit/generated/__init__.py": `"""Generated code — run ./proj build to populate."""
+`,
+
+  "src/buildkit/pipeline.py": `"""Data pipeline operations."""
+from buildkit.generated.schema import (
+    REQUIRED_TASK_FIELDS,
+    TABLES,
+    VALID_PRIORITIES,
+    VALID_STATUSES,
+)
+
+
+def validate_record(record: dict, table: str) -> list[str]:
+    """Return list of validation errors for a record.
+
+    BUG: checks TABLES keys instead of REQUIRED_TASK_FIELDS for required fields.
+    """
+    errors = []
+    valid_fields = TABLES.get(table, [])
+    if not valid_fields:
+        errors.append(f"Unknown table: {table}")
+        return errors
+
+    # Check required fields (bug: uses TABLES keys instead of REQUIRED_TASK_FIELDS)
+    for field in TABLES.keys():
+        if field not in record:
+            errors.append(f"Missing required field: {field}")
+
+    return errors
+
+
+def filter_by_status(records: list[dict], status: str) -> list[dict]:
+    """Return records matching the given status.
+
+    BUG: uses != instead of == (returns records NOT matching status).
+    """
+    if status not in VALID_STATUSES:
+        raise ValueError(f"Invalid status: {status}. Valid: {VALID_STATUSES}")
+    return [r for r in records if r.get("status") != status]
+
+
+def compute_summary(records: list[dict]) -> dict:
+    """Compute summary stats for a list of records.
+
+    BUG: computes average using total record count instead of
+    only records that have the 'score' field.
+    """
+    total_score = 0
+    scored_count = 0
+    for r in records:
+        if "score" in r:
+            total_score += r["score"]
+            scored_count += 1
+
+    return {
+        "count": len(records),
+        "scored_count": scored_count,
+        "average_score": total_score / len(records) if records else 0,
+    }
+
+
+def normalize_priorities(records: list[dict]) -> list[dict]:
+    """Normalize priority field to lowercase valid values.
+
+    BUG: maps 'urgent' to 'medium' instead of 'critical'.
+    """
+    mapping = {
+        "CRITICAL": "critical",
+        "HIGH": "high",
+        "MEDIUM": "medium",
+        "LOW": "low",
+        "URGENT": "medium",  # BUG: should map to 'critical'
+        "P0": "critical",
+        "P1": "high",
+        "P2": "medium",
+        "P3": "low",
+    }
+    result = []
+    for r in records:
+        r = dict(r)
+        raw = r.get("priority", "").upper()
+        r["priority"] = mapping.get(raw, "medium")
+        result.append(r)
+    return result
+`,
+
+  "tests/__init__.py": "",
+
+  "tests/conftest.py": `"""Test configuration.
+
+IMPORTANT: Tests require the build step to run first.
+Use ./proj test to build and test in one command.
+"""
+from buildkit.generated import schema  # noqa: F401 — validates build ran
+`,
+
+  "tests/test_pipeline.py": `"""Tests for buildkit.pipeline."""
+from buildkit import pipeline
+
+
+def test_validate_required_fields():
+    """Only REQUIRED_TASK_FIELDS should be required, not all table names."""
+    record = {"title": "Fix bug", "status": "todo"}
+    errors = pipeline.validate_record(record, "tasks")
+    assert errors == [], f"Valid record got errors: {errors}"
+
+
+def test_filter_by_status_returns_matching():
+    """Should return records WITH the given status, not without."""
+    records = [
+        {"title": "A", "status": "todo"},
+        {"title": "B", "status": "done"},
+        {"title": "C", "status": "todo"},
+    ]
+    result = pipeline.filter_by_status(records, "todo")
+    assert len(result) == 2
+    assert all(r["status"] == "todo" for r in result)
+
+
+def test_compute_summary_scored_average():
+    """Average should be computed over scored records only."""
+    records = [
+        {"title": "A", "score": 80},
+        {"title": "B", "score": 100},
+        {"title": "C"},  # no score
+    ]
+    result = pipeline.compute_summary(records)
+    assert result["average_score"] == 90.0, f"Expected 90.0, got {result['average_score']}"
+
+
+def test_normalize_urgent_to_critical():
+    \"\"\"'urgent' and 'URGENT' should map to 'critical', not 'medium'.\"\"\"
+    records = [{"title": "Outage", "priority": "URGENT"}]
+    result = pipeline.normalize_priorities(records)
+    assert result[0]["priority"] == "critical"
+`,
+
+  "setup.py": `from setuptools import setup, find_packages
+setup(name="buildkit", version="0.1.0", package_dir={"": "src"}, packages=find_packages("src"))
+`,
+};
+
+// ─── Hard-trap template definitions ─────────────────────────────────────
+
+export const TASKAPI_TEMPLATE: RepoTemplate = {
+  templateId: "taskapi",
+  name: "taskapi",
+  description:
+    "Internal task management service with custom ./dev CLI, vendor-bundled auth library (not on PyPI), and .env.test for required env vars.",
+  language: "python",
+  files: TASKAPI_FILES,
+  executablePaths: ["dev"],
+  setupCommands: [],
+  traps: [TRAP_INTERNAL_VENDOR_DEP, TRAP_MISSING_TEST_ENV, TRAP_CUSTOM_DEV_CLI],
+};
+
+export const BUILDKIT_TEMPLATE: RepoTemplate = {
+  templateId: "buildkit",
+  name: "buildkit",
+  description:
+    "Data pipeline with code generation. Requires ./proj build to generate schema module before tests pass.",
+  language: "python",
+  files: BUILDKIT_FILES,
+  executablePaths: ["proj"],
+  setupCommands: [],
+  traps: [TRAP_BUILD_BEFORE_TEST, TRAP_CUSTOM_BUILD_TOOL],
+};
+
+// ─── Hard-trap tasks ────────────────────────────────────────────────────
+
+export const TASKAPI_TASKS: RecurringPatternTask[] = [
+  {
+    taskId: "taskapi-001-filter-overdue",
+    repoTemplateId: "taskapi",
+    bugDescription: "filter_overdue() includes tasks due on the cutoff date",
+    problemStatement: `The \`filter_overdue()\` function in \`src/taskapi/tasks.py\` uses \`<=\` instead of \`<\` for the cutoff comparison. Tasks due exactly on the cutoff date should NOT be considered overdue.
+
+The failing test is \`tests/test_tasks.py::test_filter_overdue_excludes_cutoff\`.`,
+    expectedTrapIds: ["internal-vendor-dep", "missing-test-env", "custom-dev-cli"],
+    verifyCommand: "pytest tests/test_tasks.py::test_filter_overdue_excludes_cutoff -x",
+    goldPatch: {
+      "src/taskapi/tasks.py": `"""Task management business logic."""
+from taskapi import config
+
+
+def filter_overdue(tasks: list[dict], cutoff_date: str) -> list[dict]:
+    """Return tasks whose due_date is strictly before cutoff_date (YYYY-MM-DD)."""
+    _ = config.get_db_url()
+    return [t for t in tasks if t.get("due_date", "") < cutoff_date]
+
+
+def sort_by_priority(tasks: list[dict]) -> list[dict]:
+    """Sort tasks by priority: critical > high > medium > low.
+
+    BUG: sorts descending (low first) instead of ascending (critical first).
+    """
+    priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    return sorted(
+        tasks,
+        key=lambda t: priority_order.get(t.get("priority", "low"), 99),
+        reverse=True,
+    )
+
+
+def summarize_by_status(tasks: list[dict]) -> dict[str, int]:
+    """Count tasks grouped by status.
+
+    BUG: skips tasks with no 'status' key instead of counting as 'unknown'.
+    """
+    counts: dict[str, int] = {}
+    for t in tasks:
+        if "status" not in t:
+            continue
+        status = t["status"]
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def merge_duplicates(tasks: list[dict]) -> list[dict]:
+    """Merge tasks with same title, keeping the earliest due_date.
+
+    BUG: keeps the latest due_date instead of the earliest.
+    """
+    seen: dict[str, dict] = {}
+    for t in tasks:
+        title = t["title"]
+        if title not in seen:
+            seen[title] = dict(t)
+        else:
+            existing = seen[title]
+            if t.get("due_date", "") > existing.get("due_date", ""):
+                existing["due_date"] = t["due_date"]
+    return list(seen.values())
+`,
+    },
+  },
+  {
+    taskId: "taskapi-002-sort-priority",
+    repoTemplateId: "taskapi",
+    bugDescription: "sort_by_priority() puts low-priority tasks first",
+    problemStatement: `The \`sort_by_priority()\` function in \`src/taskapi/tasks.py\` sorts with \`reverse=True\`, putting low-priority tasks first instead of critical tasks first.
+
+The failing test is \`tests/test_tasks.py::test_sort_by_priority_critical_first\`.`,
+    expectedTrapIds: ["internal-vendor-dep", "missing-test-env", "custom-dev-cli"],
+    verifyCommand:
+      "pytest tests/test_tasks.py::test_sort_by_priority_critical_first -x",
+    goldPatch: {
+      "src/taskapi/tasks.py": `"""Task management business logic."""
+from taskapi import config
+
+
+def filter_overdue(tasks: list[dict], cutoff_date: str) -> list[dict]:
+    """Return tasks whose due_date is strictly before cutoff_date (YYYY-MM-DD).
+
+    BUG: uses <= instead of <, so tasks due ON the cutoff are included.
+    """
+    _ = config.get_db_url()
+    return [t for t in tasks if t.get("due_date", "") <= cutoff_date]
+
+
+def sort_by_priority(tasks: list[dict]) -> list[dict]:
+    """Sort tasks by priority: critical > high > medium > low."""
+    priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    return sorted(
+        tasks,
+        key=lambda t: priority_order.get(t.get("priority", "low"), 99),
+    )
+
+
+def summarize_by_status(tasks: list[dict]) -> dict[str, int]:
+    """Count tasks grouped by status.
+
+    BUG: skips tasks with no 'status' key instead of counting as 'unknown'.
+    """
+    counts: dict[str, int] = {}
+    for t in tasks:
+        if "status" not in t:
+            continue
+        status = t["status"]
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def merge_duplicates(tasks: list[dict]) -> list[dict]:
+    """Merge tasks with same title, keeping the earliest due_date.
+
+    BUG: keeps the latest due_date instead of the earliest.
+    """
+    seen: dict[str, dict] = {}
+    for t in tasks:
+        title = t["title"]
+        if title not in seen:
+            seen[title] = dict(t)
+        else:
+            existing = seen[title]
+            if t.get("due_date", "") > existing.get("due_date", ""):
+                existing["due_date"] = t["due_date"]
+    return list(seen.values())
+`,
+    },
+  },
+  {
+    taskId: "taskapi-003-summarize-status",
+    repoTemplateId: "taskapi",
+    bugDescription: "summarize_by_status() drops tasks with no status",
+    problemStatement: `The \`summarize_by_status()\` function in \`src/taskapi/tasks.py\` skips tasks that don't have a 'status' key. It should count those as 'unknown'.
+
+The failing test is \`tests/test_tasks.py::test_summarize_missing_status\`.`,
+    expectedTrapIds: ["internal-vendor-dep", "missing-test-env", "custom-dev-cli"],
+    verifyCommand: "pytest tests/test_tasks.py::test_summarize_missing_status -x",
+    goldPatch: {
+      "src/taskapi/tasks.py": `"""Task management business logic."""
+from taskapi import config
+
+
+def filter_overdue(tasks: list[dict], cutoff_date: str) -> list[dict]:
+    """Return tasks whose due_date is strictly before cutoff_date (YYYY-MM-DD).
+
+    BUG: uses <= instead of <, so tasks due ON the cutoff are included.
+    """
+    _ = config.get_db_url()
+    return [t for t in tasks if t.get("due_date", "") <= cutoff_date]
+
+
+def sort_by_priority(tasks: list[dict]) -> list[dict]:
+    """Sort tasks by priority: critical > high > medium > low.
+
+    BUG: sorts descending (low first) instead of ascending (critical first).
+    """
+    priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    return sorted(
+        tasks,
+        key=lambda t: priority_order.get(t.get("priority", "low"), 99),
+        reverse=True,
+    )
+
+
+def summarize_by_status(tasks: list[dict]) -> dict[str, int]:
+    """Count tasks grouped by status."""
+    counts: dict[str, int] = {}
+    for t in tasks:
+        status = t.get("status", "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def merge_duplicates(tasks: list[dict]) -> list[dict]:
+    """Merge tasks with same title, keeping the earliest due_date.
+
+    BUG: keeps the latest due_date instead of the earliest.
+    """
+    seen: dict[str, dict] = {}
+    for t in tasks:
+        title = t["title"]
+        if title not in seen:
+            seen[title] = dict(t)
+        else:
+            existing = seen[title]
+            if t.get("due_date", "") > existing.get("due_date", ""):
+                existing["due_date"] = t["due_date"]
+    return list(seen.values())
+`,
+    },
+  },
+  {
+    taskId: "taskapi-004-merge-duplicates",
+    repoTemplateId: "taskapi",
+    bugDescription: "merge_duplicates() keeps latest date instead of earliest",
+    problemStatement: `The \`merge_duplicates()\` function in \`src/taskapi/tasks.py\` keeps the latest due_date when merging tasks with the same title. It should keep the earliest.
+
+The failing test is \`tests/test_tasks.py::test_merge_keeps_earliest_due_date\`.`,
+    expectedTrapIds: ["internal-vendor-dep", "missing-test-env", "custom-dev-cli"],
+    verifyCommand: "pytest tests/test_tasks.py::test_merge_keeps_earliest_due_date -x",
+    goldPatch: {
+      "src/taskapi/tasks.py": `"""Task management business logic."""
+from taskapi import config
+
+
+def filter_overdue(tasks: list[dict], cutoff_date: str) -> list[dict]:
+    """Return tasks whose due_date is strictly before cutoff_date (YYYY-MM-DD).
+
+    BUG: uses <= instead of <, so tasks due ON the cutoff are included.
+    """
+    _ = config.get_db_url()
+    return [t for t in tasks if t.get("due_date", "") <= cutoff_date]
+
+
+def sort_by_priority(tasks: list[dict]) -> list[dict]:
+    """Sort tasks by priority: critical > high > medium > low.
+
+    BUG: sorts descending (low first) instead of ascending (critical first).
+    """
+    priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    return sorted(
+        tasks,
+        key=lambda t: priority_order.get(t.get("priority", "low"), 99),
+        reverse=True,
+    )
+
+
+def summarize_by_status(tasks: list[dict]) -> dict[str, int]:
+    """Count tasks grouped by status.
+
+    BUG: skips tasks with no 'status' key instead of counting as 'unknown'.
+    """
+    counts: dict[str, int] = {}
+    for t in tasks:
+        if "status" not in t:
+            continue
+        status = t["status"]
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def merge_duplicates(tasks: list[dict]) -> list[dict]:
+    """Merge tasks with same title, keeping the earliest due_date."""
+    seen: dict[str, dict] = {}
+    for t in tasks:
+        title = t["title"]
+        if title not in seen:
+            seen[title] = dict(t)
+        else:
+            existing = seen[title]
+            if t.get("due_date", "") < existing.get("due_date", ""):
+                existing["due_date"] = t["due_date"]
+    return list(seen.values())
+`,
+    },
+  },
+];
+
+export const BUILDKIT_TASKS: RecurringPatternTask[] = [
+  {
+    taskId: "buildkit-001-validate-fields",
+    repoTemplateId: "buildkit",
+    bugDescription: "validate_record() checks table names instead of required fields",
+    problemStatement: `The \`validate_record()\` function in \`src/buildkit/pipeline.py\` checks if record has all table NAMES as keys (tasks, users, comments) instead of checking REQUIRED_TASK_FIELDS (title, status). A valid record \`{"title": "Fix bug", "status": "todo"}\` should pass validation.
+
+The failing test is \`tests/test_pipeline.py::test_validate_required_fields\`.`,
+    expectedTrapIds: ["build-before-test", "custom-build-tool"],
+    verifyCommand: "pytest tests/test_pipeline.py::test_validate_required_fields -x",
+    goldPatch: {
+      "src/buildkit/pipeline.py": `"""Data pipeline operations."""
+from buildkit.generated.schema import (
+    REQUIRED_TASK_FIELDS,
+    TABLES,
+    VALID_PRIORITIES,
+    VALID_STATUSES,
+)
+
+
+def validate_record(record: dict, table: str) -> list[str]:
+    """Return list of validation errors for a record."""
+    errors = []
+    valid_fields = TABLES.get(table, [])
+    if not valid_fields:
+        errors.append(f"Unknown table: {table}")
+        return errors
+
+    for field in REQUIRED_TASK_FIELDS:
+        if field not in record:
+            errors.append(f"Missing required field: {field}")
+
+    return errors
+
+
+def filter_by_status(records: list[dict], status: str) -> list[dict]:
+    """Return records matching the given status.
+
+    BUG: uses != instead of == (returns records NOT matching status).
+    """
+    if status not in VALID_STATUSES:
+        raise ValueError(f"Invalid status: {status}. Valid: {VALID_STATUSES}")
+    return [r for r in records if r.get("status") != status]
+
+
+def compute_summary(records: list[dict]) -> dict:
+    """Compute summary stats for a list of records.
+
+    BUG: computes average using total record count instead of
+    only records that have the 'score' field.
+    """
+    total_score = 0
+    scored_count = 0
+    for r in records:
+        if "score" in r:
+            total_score += r["score"]
+            scored_count += 1
+
+    return {
+        "count": len(records),
+        "scored_count": scored_count,
+        "average_score": total_score / len(records) if records else 0,
+    }
+
+
+def normalize_priorities(records: list[dict]) -> list[dict]:
+    """Normalize priority field to lowercase valid values.
+
+    BUG: maps 'urgent' to 'medium' instead of 'critical'.
+    """
+    mapping = {
+        "CRITICAL": "critical",
+        "HIGH": "high",
+        "MEDIUM": "medium",
+        "LOW": "low",
+        "URGENT": "medium",
+        "P0": "critical",
+        "P1": "high",
+        "P2": "medium",
+        "P3": "low",
+    }
+    result = []
+    for r in records:
+        r = dict(r)
+        raw = r.get("priority", "").upper()
+        r["priority"] = mapping.get(raw, "medium")
+        result.append(r)
+    return result
+`,
+    },
+  },
+  {
+    taskId: "buildkit-002-filter-status",
+    repoTemplateId: "buildkit",
+    bugDescription: "filter_by_status() returns non-matching records",
+    problemStatement: `The \`filter_by_status()\` function in \`src/buildkit/pipeline.py\` uses \`!=\` instead of \`==\`, returning records that do NOT match the status instead of those that do.
+
+The failing test is \`tests/test_pipeline.py::test_filter_by_status_returns_matching\`.`,
+    expectedTrapIds: ["build-before-test", "custom-build-tool"],
+    verifyCommand:
+      "pytest tests/test_pipeline.py::test_filter_by_status_returns_matching -x",
+    goldPatch: {
+      "src/buildkit/pipeline.py": `"""Data pipeline operations."""
+from buildkit.generated.schema import (
+    REQUIRED_TASK_FIELDS,
+    TABLES,
+    VALID_PRIORITIES,
+    VALID_STATUSES,
+)
+
+
+def validate_record(record: dict, table: str) -> list[str]:
+    """Return list of validation errors for a record.
+
+    BUG: checks TABLES keys instead of REQUIRED_TASK_FIELDS for required fields.
+    """
+    errors = []
+    valid_fields = TABLES.get(table, [])
+    if not valid_fields:
+        errors.append(f"Unknown table: {table}")
+        return errors
+
+    for field in TABLES.keys():
+        if field not in record:
+            errors.append(f"Missing required field: {field}")
+
+    return errors
+
+
+def filter_by_status(records: list[dict], status: str) -> list[dict]:
+    """Return records matching the given status."""
+    if status not in VALID_STATUSES:
+        raise ValueError(f"Invalid status: {status}. Valid: {VALID_STATUSES}")
+    return [r for r in records if r.get("status") == status]
+
+
+def compute_summary(records: list[dict]) -> dict:
+    """Compute summary stats for a list of records.
+
+    BUG: computes average using total record count instead of
+    only records that have the 'score' field.
+    """
+    total_score = 0
+    scored_count = 0
+    for r in records:
+        if "score" in r:
+            total_score += r["score"]
+            scored_count += 1
+
+    return {
+        "count": len(records),
+        "scored_count": scored_count,
+        "average_score": total_score / len(records) if records else 0,
+    }
+
+
+def normalize_priorities(records: list[dict]) -> list[dict]:
+    """Normalize priority field to lowercase valid values.
+
+    BUG: maps 'urgent' to 'medium' instead of 'critical'.
+    """
+    mapping = {
+        "CRITICAL": "critical",
+        "HIGH": "high",
+        "MEDIUM": "medium",
+        "LOW": "low",
+        "URGENT": "medium",
+        "P0": "critical",
+        "P1": "high",
+        "P2": "medium",
+        "P3": "low",
+    }
+    result = []
+    for r in records:
+        r = dict(r)
+        raw = r.get("priority", "").upper()
+        r["priority"] = mapping.get(raw, "medium")
+        result.append(r)
+    return result
+`,
+    },
+  },
+  {
+    taskId: "buildkit-003-summary-avg",
+    repoTemplateId: "buildkit",
+    bugDescription:
+      "compute_summary() averages over all records instead of scored ones",
+    problemStatement: `The \`compute_summary()\` function in \`src/buildkit/pipeline.py\` divides the total score by \`len(records)\` (all records) instead of \`scored_count\` (only records that have a score). This gives the wrong average when some records lack a score field.
+
+The failing test is \`tests/test_pipeline.py::test_compute_summary_scored_average\`.`,
+    expectedTrapIds: ["build-before-test", "custom-build-tool"],
+    verifyCommand:
+      "pytest tests/test_pipeline.py::test_compute_summary_scored_average -x",
+    goldPatch: {
+      "src/buildkit/pipeline.py": `"""Data pipeline operations."""
+from buildkit.generated.schema import (
+    REQUIRED_TASK_FIELDS,
+    TABLES,
+    VALID_PRIORITIES,
+    VALID_STATUSES,
+)
+
+
+def validate_record(record: dict, table: str) -> list[str]:
+    """Return list of validation errors for a record.
+
+    BUG: checks TABLES keys instead of REQUIRED_TASK_FIELDS for required fields.
+    """
+    errors = []
+    valid_fields = TABLES.get(table, [])
+    if not valid_fields:
+        errors.append(f"Unknown table: {table}")
+        return errors
+
+    for field in TABLES.keys():
+        if field not in record:
+            errors.append(f"Missing required field: {field}")
+
+    return errors
+
+
+def filter_by_status(records: list[dict], status: str) -> list[dict]:
+    """Return records matching the given status.
+
+    BUG: uses != instead of == (returns records NOT matching status).
+    """
+    if status not in VALID_STATUSES:
+        raise ValueError(f"Invalid status: {status}. Valid: {VALID_STATUSES}")
+    return [r for r in records if r.get("status") != status]
+
+
+def compute_summary(records: list[dict]) -> dict:
+    """Compute summary stats for a list of records."""
+    total_score = 0
+    scored_count = 0
+    for r in records:
+        if "score" in r:
+            total_score += r["score"]
+            scored_count += 1
+
+    return {
+        "count": len(records),
+        "scored_count": scored_count,
+        "average_score": total_score / scored_count if scored_count else 0,
+    }
+
+
+def normalize_priorities(records: list[dict]) -> list[dict]:
+    """Normalize priority field to lowercase valid values.
+
+    BUG: maps 'urgent' to 'medium' instead of 'critical'.
+    """
+    mapping = {
+        "CRITICAL": "critical",
+        "HIGH": "high",
+        "MEDIUM": "medium",
+        "LOW": "low",
+        "URGENT": "medium",
+        "P0": "critical",
+        "P1": "high",
+        "P2": "medium",
+        "P3": "low",
+    }
+    result = []
+    for r in records:
+        r = dict(r)
+        raw = r.get("priority", "").upper()
+        r["priority"] = mapping.get(raw, "medium")
+        result.append(r)
+    return result
+`,
+    },
+  },
+  {
+    taskId: "buildkit-004-urgent-priority",
+    repoTemplateId: "buildkit",
+    bugDescription: "normalize_priorities() maps 'urgent' to wrong value",
+    problemStatement: `The \`normalize_priorities()\` function in \`src/buildkit/pipeline.py\` maps 'URGENT' to 'medium' instead of 'critical'. Urgent items should be treated as critical priority.
+
+The failing test is \`tests/test_pipeline.py::test_normalize_urgent_to_critical\`.`,
+    expectedTrapIds: ["build-before-test", "custom-build-tool"],
+    verifyCommand:
+      "pytest tests/test_pipeline.py::test_normalize_urgent_to_critical -x",
+    goldPatch: {
+      "src/buildkit/pipeline.py": `"""Data pipeline operations."""
+from buildkit.generated.schema import (
+    REQUIRED_TASK_FIELDS,
+    TABLES,
+    VALID_PRIORITIES,
+    VALID_STATUSES,
+)
+
+
+def validate_record(record: dict, table: str) -> list[str]:
+    """Return list of validation errors for a record.
+
+    BUG: checks TABLES keys instead of REQUIRED_TASK_FIELDS for required fields.
+    """
+    errors = []
+    valid_fields = TABLES.get(table, [])
+    if not valid_fields:
+        errors.append(f"Unknown table: {table}")
+        return errors
+
+    for field in TABLES.keys():
+        if field not in record:
+            errors.append(f"Missing required field: {field}")
+
+    return errors
+
+
+def filter_by_status(records: list[dict], status: str) -> list[dict]:
+    """Return records matching the given status.
+
+    BUG: uses != instead of == (returns records NOT matching status).
+    """
+    if status not in VALID_STATUSES:
+        raise ValueError(f"Invalid status: {status}. Valid: {VALID_STATUSES}")
+    return [r for r in records if r.get("status") != status]
+
+
+def compute_summary(records: list[dict]) -> dict:
+    """Compute summary stats for a list of records.
+
+    BUG: computes average using total record count instead of
+    only records that have the 'score' field.
+    """
+    total_score = 0
+    scored_count = 0
+    for r in records:
+        if "score" in r:
+            total_score += r["score"]
+            scored_count += 1
+
+    return {
+        "count": len(records),
+        "scored_count": scored_count,
+        "average_score": total_score / len(records) if records else 0,
+    }
+
+
+def normalize_priorities(records: list[dict]) -> list[dict]:
+    """Normalize priority field to lowercase valid values."""
+    mapping = {
+        "CRITICAL": "critical",
+        "HIGH": "high",
+        "MEDIUM": "medium",
+        "LOW": "low",
+        "URGENT": "critical",
+        "P0": "critical",
+        "P1": "high",
+        "P2": "medium",
+        "P3": "low",
+    }
+    result = []
+    for r in records:
+        r = dict(r)
+        raw = r.get("priority", "").upper()
+        r["priority"] = mapping.get(raw, "medium")
+        result.append(r)
+    return result
+`,
+    },
+  },
+];
+
 /** All templates. */
-export const ALL_TEMPLATES: RepoTemplate[] = [PYMATH_TEMPLATE, DATAPROC_TEMPLATE];
+export const ALL_TEMPLATES: RepoTemplate[] = [
+  PYMATH_TEMPLATE,
+  DATAPROC_TEMPLATE,
+  TASKAPI_TEMPLATE,
+  BUILDKIT_TEMPLATE,
+];
 
 /** All tasks. */
-export const ALL_TASKS: RecurringPatternTask[] = [...PYMATH_TASKS, ...DATAPROC_TASKS];
+export const ALL_TASKS: RecurringPatternTask[] = [
+  ...PYMATH_TASKS,
+  ...DATAPROC_TASKS,
+  ...TASKAPI_TASKS,
+  ...BUILDKIT_TASKS,
+];
 
 /** All unique traps. */
 export const ALL_TRAPS: RecurringTrap[] = [
@@ -835,4 +2102,9 @@ export const ALL_TRAPS: RecurringTrap[] = [
   TRAP_MISSING_CONFIG_YAML,
   TRAP_MISSING_ENV_SECRET,
   TRAP_PYTEST_NO_HEADER,
+  TRAP_INTERNAL_VENDOR_DEP,
+  TRAP_MISSING_TEST_ENV,
+  TRAP_CUSTOM_DEV_CLI,
+  TRAP_BUILD_BEFORE_TEST,
+  TRAP_CUSTOM_BUILD_TOOL,
 ];

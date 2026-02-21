@@ -9,94 +9,95 @@ import {
 describe("HardWiredErrorTimeMatcher", () => {
   const matcher = new HardWiredErrorTimeMatcher();
 
-  describe("missing-pytest-cov", () => {
-    it("matches unrecognized --cov argument", () => {
+  describe("hard traps — internal vendor dep", () => {
+    it("matches ModuleNotFoundError for authlib_internal", () => {
+      const error = "ModuleNotFoundError: No module named 'authlib_internal'";
+      const hint = matcher.match(error);
+      expect(hint).not.toBeNull();
+      expect(hint?.hintId).toBe("err-internal-vendor-dep");
+      expect(hint?.family).toBe("env_dep");
+      expect(hint?.confidence).toBeGreaterThanOrEqual(0.9);
+    });
+
+    it("matches pip failure for authlib-internal", () => {
       const error =
-        "ERROR: usage: pytest [options] [file_or_dir]\n" +
+        "ERROR: No matching distribution found for authlib-internal";
+      const hint = matcher.match(error);
+      expect(hint).not.toBeNull();
+      expect(hint?.hintId).toBe("err-vendor-not-on-pypi");
+    });
+  });
+
+  describe("hard traps — missing test env", () => {
+    it("matches KeyError for TASKAPI_DB_URL", () => {
+      const error = "KeyError: 'TASKAPI_DB_URL'";
+      const hint = matcher.match(error);
+      expect(hint).not.toBeNull();
+      expect(hint?.hintId).toBe("err-missing-test-env");
+      expect(hint?.family).toBe("config");
+    });
+
+    it("matches KeyError for TASKAPI_SECRET", () => {
+      const error = "KeyError: 'TASKAPI_SECRET'";
+      const hint = matcher.match(error);
+      expect(hint).not.toBeNull();
+      expect(hint?.hintId).toBe("err-missing-test-env");
+    });
+  });
+
+  describe("hard traps — generated code missing", () => {
+    it("matches generated.schema import error", () => {
+      const error =
+        "ModuleNotFoundError: No module named 'buildkit.generated.schema'";
+      const hint = matcher.match(error);
+      expect(hint).not.toBeNull();
+      expect(hint?.hintId).toBe("err-generated-code-missing");
+      expect(hint?.family).toBe("tool_flag");
+    });
+  });
+
+  describe("medium traps", () => {
+    it("matches missing pytest-cov", () => {
+      const error =
         "pytest: error: unrecognized arguments: --cov=pymath --cov-report=term-missing";
       const hint = matcher.match(error);
       expect(hint).not.toBeNull();
       expect(hint?.hintId).toBe("err-missing-pytest-cov-unrecognized");
-      expect(hint?.family).toBe("env_dep");
-      expect(hint?.fixCommand).toBe("pip install pytest-cov");
-      expect(hint?.confidence).toBeGreaterThanOrEqual(0.9);
     });
 
-    it("matches ModuleNotFoundError for pytest_cov", () => {
-      const error = "ModuleNotFoundError: No module named 'pytest_cov'";
-      const hint = matcher.match(error);
-      expect(hint).not.toBeNull();
-      expect(hint?.hintId).toBe("err-missing-pytest-cov-module");
-      expect(hint?.fixCommand).toBe("pip install pytest-cov");
-    });
-  });
-
-  describe("missing-pyyaml", () => {
-    it("matches ModuleNotFoundError for yaml", () => {
+    it("matches missing pyyaml", () => {
       const error = "ModuleNotFoundError: No module named 'yaml'";
       const hint = matcher.match(error);
       expect(hint).not.toBeNull();
       expect(hint?.hintId).toBe("err-missing-pyyaml");
-      expect(hint?.fixCommand).toBe("pip install pyyaml");
-    });
-  });
-
-  describe("package-not-installed", () => {
-    it("matches pymath import error", () => {
-      const error = "ModuleNotFoundError: No module named 'pymath'";
-      const hint = matcher.match(error);
-      expect(hint).not.toBeNull();
-      expect(hint?.hintId).toBe("err-package-not-installed");
-      expect(hint?.fixCommand).toBe("pip install -e .");
     });
 
-    it("matches dataproc import error", () => {
-      const error = "ImportError: No module named 'dataproc'";
-      const hint = matcher.match(error);
-      expect(hint).not.toBeNull();
-      expect(hint?.hintId).toBe("err-package-not-installed");
-    });
-  });
-
-  describe("missing-config-yaml", () => {
-    it("matches FileNotFoundError for config.yaml", () => {
+    it("matches missing config.yaml", () => {
       const error =
         "FileNotFoundError: [Errno 2] No such file or directory: 'config.yaml'";
       const hint = matcher.match(error);
       expect(hint).not.toBeNull();
       expect(hint?.hintId).toBe("err-missing-config-yaml");
-      expect(hint?.fixCommand).toBe("cp config.yaml.example config.yaml");
     });
   });
 
-  describe("missing-secret-key", () => {
-    it("matches KeyError for SECRET_KEY", () => {
-      const error = "KeyError: 'SECRET_KEY'";
-      const hint = matcher.match(error);
-      expect(hint).not.toBeNull();
-      expect(hint?.hintId).toBe("err-missing-secret-key");
-      expect(hint?.fixCommand).toContain("SECRET_KEY");
+  describe("easy traps — NOT matched (models handle these)", () => {
+    it("does not match pytest: command not found", () => {
+      expect(
+        matcher.match("/bin/bash: line 1: pytest: command not found"),
+      ).toBeNull();
     });
-  });
 
-  describe("broad-pytest-slow", () => {
-    it("matches slow integration test failures", () => {
-      const error =
-        "FAILED tests/test_integration.py::test_heavy_computation - assert True";
-      const hint = matcher.match(error);
-      expect(hint).not.toBeNull();
-      expect(hint?.hintId).toBe("err-broad-pytest-slow");
-      expect(hint?.family).toBe("tool_flag");
+    it("does not match externally-managed-environment", () => {
+      expect(
+        matcher.match("error: externally-managed-environment"),
+      ).toBeNull();
     });
-  });
 
-  describe("generic-missing-module", () => {
-    it("matches any ModuleNotFoundError", () => {
-      const error = "ModuleNotFoundError: No module named 'obscure_library'";
-      const hint = matcher.match(error);
-      expect(hint).not.toBeNull();
-      expect(hint?.hintId).toBe("err-generic-missing-module");
-      expect(hint?.confidence).toBeLessThan(0.7);
+    it("does not match generic missing module", () => {
+      expect(
+        matcher.match("ModuleNotFoundError: No module named 'requests'"),
+      ).toBeNull();
     });
   });
 
@@ -108,44 +109,40 @@ describe("HardWiredErrorTimeMatcher", () => {
     it("returns null for empty text", () => {
       expect(matcher.match("")).toBeNull();
     });
-
-    it("returns null for unrelated error", () => {
-      expect(matcher.match("TypeError: cannot add int and str")).toBeNull();
-    });
-  });
-
-  describe("priority (highest confidence wins)", () => {
-    it("prefers specific match over generic", () => {
-      // "No module named 'pymath'" matches both err-package-not-installed
-      // (confidence 0.9) and err-generic-missing-module (confidence 0.6).
-      const error = "ModuleNotFoundError: No module named 'pymath'";
-      const hint = matcher.match(error);
-      expect(hint?.hintId).toBe("err-package-not-installed");
-    });
   });
 });
 
 describe("formatErrorTimeHint", () => {
-  it("formats a hint with explanation and fix command", () => {
+  it("formats a hint with explanation", () => {
     const formatted = formatErrorTimeHint({
-      hintId: "err-missing-pytest-cov-unrecognized",
+      hintId: "err-internal-vendor-dep",
       family: "env_dep",
-      matchedPattern: "unrecognized arguments.*--cov",
-      matchedText: "unrecognized arguments: --cov=pymath",
-      explanation: "pytest-cov is not installed.",
-      fixCommand: "pip install pytest-cov",
+      matchedPattern: "No module named.*authlib_internal",
+      matchedText: "No module named 'authlib_internal'",
+      explanation: "This is a local/internal package.",
+      fixCommand: "look in vendor/ for the package",
       confidence: 0.95,
     });
 
     expect(formatted).toContain("Happy Paths hint");
-    expect(formatted).toContain("pytest-cov is not installed.");
-    expect(formatted).toContain("pip install pytest-cov");
+    expect(formatted).toContain("local/internal package");
   });
 });
 
 describe("DEFAULT_PATTERNS", () => {
-  it("has at least 7 patterns", () => {
-    expect(DEFAULT_PATTERNS.length).toBeGreaterThanOrEqual(7);
+  it("has hard-trap patterns", () => {
+    const ids = DEFAULT_PATTERNS.map((p) => p.hintId);
+    expect(ids).toContain("err-internal-vendor-dep");
+    expect(ids).toContain("err-vendor-not-on-pypi");
+    expect(ids).toContain("err-missing-test-env");
+    expect(ids).toContain("err-generated-code-missing");
+  });
+
+  it("does NOT have easy-trap patterns", () => {
+    const ids = DEFAULT_PATTERNS.map((p) => p.hintId);
+    expect(ids).not.toContain("err-pytest-not-found");
+    expect(ids).not.toContain("err-externally-managed-env");
+    expect(ids).not.toContain("err-generic-missing-module");
   });
 
   it("every pattern has required fields", () => {

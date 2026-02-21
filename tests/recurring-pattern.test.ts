@@ -182,8 +182,10 @@ describe("template files", () => {
     expect(req).not.toContain("PyYAML");
   });
 
-  it("every template has slow integration tests", () => {
+  it("templates with broad-pytest-suite trap have slow integration tests", () => {
     for (const template of ALL_TEMPLATES) {
+      const hasBroadTrap = template.traps.some((t) => t.trapId === "broad-pytest-suite");
+      if (!hasBroadTrap) continue;
       const hasSlowTest = Object.entries(template.files).some(([path, content]) => {
         return path.startsWith("tests/") && content.includes("@pytest.mark.slow");
       });

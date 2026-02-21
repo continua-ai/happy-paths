@@ -124,29 +124,60 @@ export function formatErrorTimeHint(hint: ErrorTimeHint): string {
 // ─── Default patterns ───────────────────────────────────────────────────
 
 export const DEFAULT_PATTERNS: HardWiredPattern[] = [
-  // --- env_dep: command not found (most common real-world trap) ---
+  // ═══ HARD TRAPS (internal tooling — model has no training data) ═══
+
+  // --- env_dep: internal vendor package (not on PyPI) ---
   {
-    hintId: "err-pytest-not-found",
+    hintId: "err-internal-vendor-dep",
     family: "env_dep",
-    pattern: /(?:command not found|No such file).*pytest|pytest.*command not found/i,
+    pattern:
+      /(?:ModuleNotFoundError|ImportError).*No module named.*['"]authlib_internal['"]/i,
     explanation:
-      "pytest is not on PATH. This repo needs a virtual environment — " +
-      "check for requirements-dev.txt or pyproject.toml [project.optional-dependencies].",
-    fixCommand: "create a venv, install dev deps, then retry",
+      "This is a local/internal package, not available on PyPI. " +
+      "Check the vendor/ or lib/ directory for local packages.",
+    fixCommand: "look in vendor/ for the package and pip install it from there",
     confidence: 0.95,
   },
 
-  // --- env_dep: externally-managed-environment (PEP 668) ---
+  // --- env_dep: pip install fails for internal package ---
   {
-    hintId: "err-externally-managed-env",
+    hintId: "err-vendor-not-on-pypi",
     family: "env_dep",
-    pattern: /externally-managed-environment/i,
+    pattern:
+      /No matching distribution found for authlib|Could not find a version.*authlib.internal/i,
     explanation:
-      "System Python is externally managed (PEP 668) — pip install won't work here. " +
-      "Use a virtual environment instead.",
-    fixCommand: "create a venv first, then pip install inside it",
+      "This package isn't on PyPI — it's bundled locally. " +
+      "Check vendor/ for a local copy.",
+    fixCommand: "pip install vendor/<package>",
     confidence: 0.95,
   },
+
+  // --- config: missing test env vars ---
+  {
+    hintId: "err-missing-test-env",
+    family: "config",
+    pattern: /KeyError.*['"]TASKAPI_(?:DB_URL|SECRET)['"]/i,
+    explanation:
+      "This project requires env vars for testing. " +
+      "Look for .env.test or .env.example in the project root.",
+    fixCommand: "source .env.test (or check the project's dev CLI)",
+    confidence: 0.95,
+  },
+
+  // --- tool_flag: generated code missing (build step required) ---
+  {
+    hintId: "err-generated-code-missing",
+    family: "tool_flag",
+    pattern:
+      /ModuleNotFoundError.*(?:generated\.schema|generated\.config)|cannot import name.*from.*generated/i,
+    explanation:
+      "This module is auto-generated code — it doesn't exist until a build step runs. " +
+      "Check for a build script or README.",
+    fixCommand: "look for ./proj build, make build, or similar in the project root",
+    confidence: 0.95,
+  },
+
+  // ═══ MEDIUM TRAPS (common but models sometimes struggle) ═══
 
   // --- env_dep: missing pytest-cov ---
   {
@@ -157,16 +188,7 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
       "pytest-cov plugin is missing. pyproject.toml configures --cov in addopts " +
       "so pytest fails before running any tests.",
     fixCommand: "pip install pytest-cov",
-    confidence: 0.95,
-  },
-  {
-    hintId: "err-missing-pytest-cov-module",
-    family: "env_dep",
-    pattern: /(?:ModuleNotFoundError|ImportError).*(?:pytest_cov|pytest\.cov)/i,
-    explanation:
-      "pytest-cov plugin is missing. The test config requires it for coverage.",
-    fixCommand: "pip install pytest-cov",
-    confidence: 0.95,
+    confidence: 0.85,
   },
 
   // --- env_dep: missing PyYAML ---
@@ -176,20 +198,7 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     pattern: /(?:ModuleNotFoundError|ImportError).*No module named.*['"]yaml['"]/i,
     explanation: "The yaml module is PyYAML on PyPI (not 'yaml').",
     fixCommand: "pip install pyyaml",
-    confidence: 0.95,
-  },
-
-  // --- env_dep: package not installed (editable mode) ---
-  {
-    hintId: "err-package-not-installed",
-    family: "env_dep",
-    pattern:
-      /(?:ModuleNotFoundError|ImportError).*No module named.*['"](?:pymath|dataproc|taskapi)['"]/i,
-    explanation:
-      "This project's own package isn't on sys.path. " +
-      "It likely needs an editable install so tests can import it.",
-    fixCommand: "pip install -e .",
-    confidence: 0.9,
+    confidence: 0.85,
   },
 
   // --- config: missing config.yaml ---
@@ -200,41 +209,11 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     explanation:
       "config.yaml is missing. Look for a config.yaml.example or similar template in the repo.",
     fixCommand: "cp config.yaml.example config.yaml",
-    confidence: 0.9,
+    confidence: 0.8,
   },
 
-  // --- config: missing SECRET_KEY ---
-  {
-    hintId: "err-missing-secret-key",
-    family: "config",
-    pattern: /KeyError.*['"]SECRET_KEY['"]/i,
-    explanation:
-      "SECRET_KEY env var is required. Check for a .env.example or config docs.",
-    fixCommand: "export SECRET_KEY=<any-value-for-dev>",
-    confidence: 0.85,
-  },
-
-  // --- tool_flag: broad pytest catching slow tests ---
-  {
-    hintId: "err-broad-pytest-slow",
-    family: "tool_flag",
-    pattern:
-      /(?:FAILED|ERROR).*test_(?:integration|slow|heavy)|(?:time\.sleep|Timeout).*(?:30|60)\s*(?:sec|s\b)/i,
-    explanation:
-      "Slow/integration tests ran. Consider scoping to just the relevant test file " +
-      "or using -k / -m to skip slow markers.",
-    fixCommand: "pytest -k 'not slow and not integration' <test_file>",
-    confidence: 0.7,
-  },
-
-  // --- Generic: missing Python dependency ---
-  {
-    hintId: "err-generic-missing-module",
-    family: "env_dep",
-    pattern: /ModuleNotFoundError: No module named ['"]([^'"]+)['"]/i,
-    explanation:
-      "A Python module is missing. Check requirements.txt or requirements-dev.txt.",
-    fixCommand: "pip install -r requirements-dev.txt",
-    confidence: 0.6,
-  },
+  // ═══ EASY TRAPS (disabled — models handle these fine) ═══
+  // pytest-not-found, externally-managed-env, SECRET_KEY, broad-pytest,
+  // generic-missing-module: removed. No value in hinting on errors the
+  // model already resolves in 1 step.
 ];

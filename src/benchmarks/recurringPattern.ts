@@ -84,6 +84,9 @@ export interface RepoTemplate {
   /** Files to create: relative path → content. */
   files: Record<string, string>;
 
+  /** Paths (relative) that should be chmod +x after creation. */
+  executablePaths?: string[];
+
   /** Commands to run after creating files (before git init). */
   setupCommands: string[];
 

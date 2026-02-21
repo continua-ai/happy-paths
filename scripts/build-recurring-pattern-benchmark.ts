@@ -10,7 +10,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import type {
@@ -44,6 +44,7 @@ function createRepoDirectory(
   baseDir: string,
   templateId: string,
   files: Record<string, string>,
+  executablePaths?: string[],
 ): string {
   const repoDir = join(baseDir, "repos", templateId);
 
@@ -59,6 +60,11 @@ function createRepoDirectory(
     const dirName = fullPath.substring(0, fullPath.lastIndexOf("/"));
     mkdirSync(dirName, { recursive: true });
     writeFileSync(fullPath, content, "utf-8");
+  }
+
+  // Make specified files executable.
+  for (const relPath of executablePaths ?? []) {
+    chmodSync(join(repoDir, relPath), 0o755);
   }
 
   // Initialize git repo and make initial commit.
@@ -96,7 +102,12 @@ function main(): void {
 
   for (const template of ALL_TEMPLATES) {
     console.log(`  📁 ${template.templateId}: ${template.description.slice(0, 80)}...`);
-    const repoDir = createRepoDirectory(outDir, template.templateId, template.files);
+    const repoDir = createRepoDirectory(
+      outDir,
+      template.templateId,
+      template.files,
+      template.executablePaths,
+    );
     repoPaths[template.templateId] = repoDir;
 
     // Capture the base commit SHA.
