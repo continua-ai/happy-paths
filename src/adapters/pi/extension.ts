@@ -4,7 +4,13 @@ import {
   type ProjectIdentityOverrides,
   resolveProjectIdentity,
 } from "../../core/projectIdentity.js";
-import type { LearningSuggestion, TraceScope } from "../../core/types.js";
+import { classifyTrajectoryIssue } from "../../core/trajectoryOutcomeGate.js";
+import type {
+  LearningSuggestion,
+  TraceEvent,
+  TraceQuery,
+  TraceScope,
+} from "../../core/types.js";
 import type {
   PiBeforeAgentStartEvent,
   PiInputEvent,
@@ -186,6 +192,13 @@ function commandFromInput(input: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+function toFiniteNumber(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+  return value;
+}
+
 function swebenchInstanceIdFromSessionId(sessionId: string): string | null {
   const parts = sessionId.split("::");
   if (parts.length !== 3 && parts.length !== 4) {
@@ -237,7 +250,7 @@ function isArtifactSuggestion(suggestion: LearningSuggestion): boolean {
   );
 }
 
-const HINT_POLICY_VERSION = "v3_frozen_single_hint_utility";
+const HINT_POLICY_VERSION = "v4_contextual_harm_gate";
 const MIN_ARTIFACT_HINT_CONFIDENCE = 0.45;
 const MIN_FAILURE_WARNING_HINT_CONFIDENCE = 0.2;
 const MIN_RETRIEVAL_HINT_CONFIDENCE = 0.55;
@@ -245,10 +258,15 @@ const MIN_OTHER_HINT_CONFIDENCE = 0.6;
 const MAX_HINTS_PER_TURN = 1;
 const RETRIEVAL_WITH_ARTIFACT_OVERRIDE_CONFIDENCE = 0.92;
 const MIN_SELECTED_HINT_UTILITY_SCORE = 0.15;
+const MIN_EXPECTED_HARMFUL_REDUCTION = 0.01;
+const SIGNATURE_NEGATIVE_LIFT_THRESHOLD = -0.03;
+const MIN_SIGNATURE_SESSIONS_FOR_SUPPRESSION = 2;
+const CONTEXT_BANDIT_EXPLORATION_WEIGHT = 0.04;
 const TIMEOUT_RISK_WEIGHT = 0.65;
 const TOKEN_RISK_WEIGHT = 0.35;
 
 type SuggestionKind = "artifact" | "failure_warning" | "retrieval" | "other";
+type PolicySelectionKind = SuggestionKind | "none";
 
 interface HintSelectionDiagnostics {
   availableHintCount: number;
@@ -262,14 +280,22 @@ interface HintSelectionDiagnostics {
   filteredLowConfidenceRetrievalHintCount: number;
   filteredLowConfidenceOtherHintCount: number;
   filteredLowUtilityHintCount: number;
+  filteredByHarmRiskHintCount: number;
   policySuppressedByBudgetCount: number;
   policySuppressedByArtifactPriorityCount: number;
+  policySuppressedByCounterfactualCount: number;
   selectedArtifactHintCount: number;
   selectedFailureWarningHintCount: number;
   selectedRetrievalHintCount: number;
   selectedOtherHintCount: number;
   selectedHintKind: SuggestionKind | null;
   selectedHintUtilityScore: number | null;
+  selectedExpectedHarmfulReductionScore: number | null;
+  selectedContextualBanditScore: number | null;
+  selectedHarmfulRateBaseline: number | null;
+  selectedHarmfulRateForKind: number | null;
+  policyContextKey: string | null;
+  policyMemorySessionCount: number;
   selectionBudgetRaw: number;
   selectionBudgetApplied: number;
 }
@@ -283,6 +309,37 @@ interface ScoredSuggestionCandidate {
   suggestion: LearningSuggestion;
   kind: SuggestionKind;
   utilityScore: number;
+  expectedHarmfulReductionScore: number;
+  contextualBanditScore: number;
+  harmfulRateBaseline: number;
+  harmfulRateForKind: number;
+}
+
+interface HintPolicyKindStats {
+  sessionCount: number;
+  totalFailures: number;
+  harmfulFailures: number;
+}
+
+interface HintPolicyMemory {
+  totalSessions: number;
+  byKind: Record<PolicySelectionKind, HintPolicyKindStats>;
+  byContext: Map<string, Record<PolicySelectionKind, HintPolicyKindStats>>;
+  bySignature: Map<string, HintPolicyKindStats>;
+}
+
+interface HintPolicyDecision {
+  allow: boolean;
+  expectedHarmfulReduction: number;
+  contextualBanditScore: number;
+  harmfulRateBaseline: number;
+  harmfulRateForKind: number;
+  counterfactualSuppressed: boolean;
+}
+
+interface HintPolicyContext {
+  contextKey: string;
+  memory: HintPolicyMemory;
 }
 
 function isFailureWarningSuggestion(suggestion: LearningSuggestion): boolean {
@@ -383,14 +440,22 @@ function emptyHintSelectionDiagnostics(): HintSelectionDiagnostics {
     filteredLowConfidenceRetrievalHintCount: 0,
     filteredLowConfidenceOtherHintCount: 0,
     filteredLowUtilityHintCount: 0,
+    filteredByHarmRiskHintCount: 0,
     policySuppressedByBudgetCount: 0,
     policySuppressedByArtifactPriorityCount: 0,
+    policySuppressedByCounterfactualCount: 0,
     selectedArtifactHintCount: 0,
     selectedFailureWarningHintCount: 0,
     selectedRetrievalHintCount: 0,
     selectedOtherHintCount: 0,
     selectedHintKind: null,
     selectedHintUtilityScore: null,
+    selectedExpectedHarmfulReductionScore: null,
+    selectedContextualBanditScore: null,
+    selectedHarmfulRateBaseline: null,
+    selectedHarmfulRateForKind: null,
+    policyContextKey: null,
+    policyMemorySessionCount: 0,
     selectionBudgetRaw: 0,
     selectionBudgetApplied: 0,
   };
@@ -452,6 +517,11 @@ function annotateSelectedSuggestion(
 
   diagnostics.selectedHintKind = selected.kind;
   diagnostics.selectedHintUtilityScore = selected.utilityScore;
+  diagnostics.selectedExpectedHarmfulReductionScore =
+    selected.expectedHarmfulReductionScore;
+  diagnostics.selectedContextualBanditScore = selected.contextualBanditScore;
+  diagnostics.selectedHarmfulRateBaseline = selected.harmfulRateBaseline;
+  diagnostics.selectedHarmfulRateForKind = selected.harmfulRateForKind;
 
   if (selected.kind === "artifact") {
     diagnostics.selectedArtifactHintCount = 1;
@@ -471,11 +541,368 @@ function annotateSelectedSuggestion(
   diagnostics.selectedOtherHintCount = 1;
 }
 
+const POLICY_SELECTION_KINDS: PolicySelectionKind[] = [
+  "none",
+  "artifact",
+  "failure_warning",
+  "retrieval",
+  "other",
+];
+
+const HARMFUL_RATE_PRIOR_COUNTS: Record<
+  PolicySelectionKind,
+  {
+    harmfulFailures: number;
+    nonHarmfulFailures: number;
+  }
+> = {
+  none: {
+    harmfulFailures: 6,
+    nonHarmfulFailures: 6,
+  },
+  artifact: {
+    harmfulFailures: 5,
+    nonHarmfulFailures: 7,
+  },
+  failure_warning: {
+    harmfulFailures: 5,
+    nonHarmfulFailures: 8,
+  },
+  retrieval: {
+    harmfulFailures: 6,
+    nonHarmfulFailures: 6,
+  },
+  other: {
+    harmfulFailures: 6,
+    nonHarmfulFailures: 6,
+  },
+};
+
+function emptyHintPolicyKindStats(): HintPolicyKindStats {
+  return {
+    sessionCount: 0,
+    totalFailures: 0,
+    harmfulFailures: 0,
+  };
+}
+
+function emptyHintPolicyKindStatsRecord(): Record<
+  PolicySelectionKind,
+  HintPolicyKindStats
+> {
+  return {
+    none: emptyHintPolicyKindStats(),
+    artifact: emptyHintPolicyKindStats(),
+    failure_warning: emptyHintPolicyKindStats(),
+    retrieval: emptyHintPolicyKindStats(),
+    other: emptyHintPolicyKindStats(),
+  };
+}
+
+function normalizeHintSignatureText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\b[0-9a-f]{8,}\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 160);
+}
+
+function hintSignatureFromSuggestion(
+  suggestion: LearningSuggestion,
+  kind: SuggestionKind,
+): string {
+  const action = firstPlaybookAction(suggestion.playbookMarkdown);
+  if (action) {
+    return `${kind}:${normalizeHintSignatureText(action)}`;
+  }
+
+  return `${kind}:${normalizeHintSignatureText(suggestion.title)}`;
+}
+
+function selectedHintKindFromCheckpointPayload(
+  payload: Record<string, unknown>,
+): PolicySelectionKind {
+  const selectedKind = payload.selectedHintKind;
+  if (
+    selectedKind === "artifact" ||
+    selectedKind === "failure_warning" ||
+    selectedKind === "retrieval" ||
+    selectedKind === "other"
+  ) {
+    return selectedKind;
+  }
+
+  const hintCount = toFiniteNumber(payload.hintCount);
+  if (hintCount <= 0) {
+    return "none";
+  }
+
+  if (toFiniteNumber(payload.selectedArtifactHintCount) > 0) {
+    return "artifact";
+  }
+  if (toFiniteNumber(payload.selectedFailureWarningHintCount) > 0) {
+    return "failure_warning";
+  }
+  if (toFiniteNumber(payload.selectedRetrievalHintCount) > 0) {
+    return "retrieval";
+  }
+
+  return "other";
+}
+
+function selectedHintSignatureFromCheckpointPayload(
+  payload: Record<string, unknown>,
+  kind: PolicySelectionKind,
+): string | null {
+  if (kind === "none") {
+    return null;
+  }
+
+  const hintTitles = payload.hintTitles;
+  if (
+    Array.isArray(hintTitles) &&
+    typeof hintTitles[0] === "string" &&
+    hintTitles[0].trim().length > 0
+  ) {
+    return `${kind}:${normalizeHintSignatureText(hintTitles[0])}`;
+  }
+
+  const hintIds = payload.hintIds;
+  if (
+    Array.isArray(hintIds) &&
+    typeof hintIds[0] === "string" &&
+    hintIds[0].trim().length > 0
+  ) {
+    return `${kind}:${normalizeHintSignatureText(hintIds[0])}`;
+  }
+
+  return null;
+}
+
+function isFailureToolResultEvent(event: TraceEvent): boolean {
+  if (event.type !== "tool_result") {
+    return false;
+  }
+
+  if (event.metrics?.outcome === "failure") {
+    return true;
+  }
+
+  return event.payload?.isError === true;
+}
+
+function hintPolicyContextKeyFromSessionId(sessionId: string): string {
+  const instanceId = swebenchInstanceIdFromSessionId(sessionId);
+  if (instanceId) {
+    return `swebench:${instanceId}`;
+  }
+
+  return "global";
+}
+
+function accumulateHintPolicyStats(
+  stats: HintPolicyKindStats,
+  totalFailures: number,
+  harmfulFailures: number,
+): void {
+  stats.sessionCount += 1;
+  stats.totalFailures += totalFailures;
+  stats.harmfulFailures += harmfulFailures;
+}
+
+function buildHintPolicyMemory(events: TraceEvent[]): HintPolicyMemory {
+  const bySession = new Map<string, TraceEvent[]>();
+  for (const event of events) {
+    const bucket = bySession.get(event.sessionId);
+    if (bucket) {
+      bucket.push(event);
+    } else {
+      bySession.set(event.sessionId, [event]);
+    }
+  }
+
+  const memory: HintPolicyMemory = {
+    totalSessions: 0,
+    byKind: emptyHintPolicyKindStatsRecord(),
+    byContext: new Map(),
+    bySignature: new Map(),
+  };
+
+  for (const [sessionId, sessionEvents] of bySession.entries()) {
+    let selectedKind: PolicySelectionKind = "none";
+    let selectedSignature: string | null = null;
+    let foundHintCheckpoint = false;
+    let totalFailures = 0;
+    let harmfulFailures = 0;
+
+    for (const event of sessionEvents) {
+      if (isFailureToolResultEvent(event)) {
+        totalFailures += 1;
+        const issue = classifyTrajectoryIssue(event);
+        if (issue?.harmful) {
+          harmfulFailures += 1;
+        }
+      }
+
+      if (
+        event.type === "checkpoint" &&
+        event.payload?.kind === "happy_paths_prior_hints"
+      ) {
+        foundHintCheckpoint = true;
+        selectedKind = selectedHintKindFromCheckpointPayload(event.payload);
+        selectedSignature = selectedHintSignatureFromCheckpointPayload(
+          event.payload,
+          selectedKind,
+        );
+      }
+    }
+
+    if (!foundHintCheckpoint) {
+      continue;
+    }
+
+    memory.totalSessions += 1;
+    const contextKey = hintPolicyContextKeyFromSessionId(sessionId);
+
+    accumulateHintPolicyStats(
+      memory.byKind[selectedKind],
+      totalFailures,
+      harmfulFailures,
+    );
+
+    const contextStats =
+      memory.byContext.get(contextKey) ?? emptyHintPolicyKindStatsRecord();
+    accumulateHintPolicyStats(
+      contextStats[selectedKind],
+      totalFailures,
+      harmfulFailures,
+    );
+    memory.byContext.set(contextKey, contextStats);
+
+    if (selectedSignature) {
+      const signatureKey = `${contextKey}|${selectedSignature}`;
+      const signatureStats =
+        memory.bySignature.get(signatureKey) ?? emptyHintPolicyKindStats();
+      accumulateHintPolicyStats(signatureStats, totalFailures, harmfulFailures);
+      memory.bySignature.set(signatureKey, signatureStats);
+    }
+  }
+
+  return memory;
+}
+
+function harmfulRateFromStats(
+  stats: HintPolicyKindStats,
+  kind: PolicySelectionKind,
+): number {
+  const prior = HARMFUL_RATE_PRIOR_COUNTS[kind];
+  const priorHarmful = prior.harmfulFailures;
+  const priorTotal = prior.harmfulFailures + prior.nonHarmfulFailures;
+  const total = priorTotal + stats.totalFailures;
+  if (total <= 0) {
+    return 0.5;
+  }
+
+  return (priorHarmful + stats.harmfulFailures) / total;
+}
+
+function blendedHarmfulRateEstimate(options: {
+  memory: HintPolicyMemory;
+  contextKey: string;
+  kind: PolicySelectionKind;
+}): {
+  harmfulRate: number;
+  sampleCount: number;
+} {
+  const globalStats = options.memory.byKind[options.kind];
+  const globalRate = harmfulRateFromStats(globalStats, options.kind);
+
+  const contextRecord = options.memory.byContext.get(options.contextKey);
+  const contextStats = contextRecord?.[options.kind] ?? emptyHintPolicyKindStats();
+  const contextRate = harmfulRateFromStats(contextStats, options.kind);
+
+  if (contextStats.sessionCount <= 0) {
+    return {
+      harmfulRate: globalRate,
+      sampleCount: globalStats.sessionCount,
+    };
+  }
+
+  const contextWeight = Math.min(0.75, contextStats.sessionCount / 8);
+  const harmfulRate = contextRate * contextWeight + globalRate * (1 - contextWeight);
+
+  return {
+    harmfulRate,
+    sampleCount: contextStats.sessionCount,
+  };
+}
+
+function evaluateHintPolicyDecision(options: {
+  candidate: LearningSuggestion;
+  kind: SuggestionKind;
+  policy: HintPolicyContext;
+}): HintPolicyDecision {
+  const baselineEstimate = blendedHarmfulRateEstimate({
+    memory: options.policy.memory,
+    contextKey: options.policy.contextKey,
+    kind: "none",
+  });
+
+  const kindEstimate = blendedHarmfulRateEstimate({
+    memory: options.policy.memory,
+    contextKey: options.policy.contextKey,
+    kind: options.kind,
+  });
+
+  const expectedHarmfulReduction =
+    baselineEstimate.harmfulRate - kindEstimate.harmfulRate;
+
+  const totalSessions = Math.max(1, options.policy.memory.totalSessions);
+  const explorationBonus =
+    CONTEXT_BANDIT_EXPLORATION_WEIGHT *
+    Math.sqrt(Math.log(totalSessions + 1) / (kindEstimate.sampleCount + 1));
+
+  const contextualBanditScore = expectedHarmfulReduction + explorationBonus;
+
+  let counterfactualSuppressed = false;
+  const signature = hintSignatureFromSuggestion(options.candidate, options.kind);
+  const signatureStats = options.policy.memory.bySignature.get(
+    `${options.policy.contextKey}|${signature}`,
+  );
+
+  if (
+    signatureStats &&
+    signatureStats.sessionCount >= MIN_SIGNATURE_SESSIONS_FOR_SUPPRESSION
+  ) {
+    const signatureRate = harmfulRateFromStats(signatureStats, options.kind);
+    const signatureReduction = baselineEstimate.harmfulRate - signatureRate;
+    if (signatureReduction < SIGNATURE_NEGATIVE_LIFT_THRESHOLD) {
+      counterfactualSuppressed = true;
+    }
+  }
+
+  const allow =
+    contextualBanditScore > MIN_EXPECTED_HARMFUL_REDUCTION && !counterfactualSuppressed;
+
+  return {
+    allow,
+    expectedHarmfulReduction,
+    contextualBanditScore,
+    harmfulRateBaseline: baselineEstimate.harmfulRate,
+    harmfulRateForKind: kindEstimate.harmfulRate,
+    counterfactualSuppressed,
+  };
+}
+
 function buildScoredCandidates(
   suggestions: LearningSuggestion[],
   diagnostics: HintSelectionDiagnostics,
+  policy: HintPolicyContext,
 ): ScoredSuggestionCandidate[] {
   const scoredCandidates: ScoredSuggestionCandidate[] = [];
+  diagnostics.policyContextKey = policy.contextKey;
+  diagnostics.policyMemorySessionCount = policy.memory.totalSessions;
 
   for (const suggestion of rankSuggestionsByConfidence(suggestions)) {
     const kind = suggestionKind(suggestion);
@@ -486,14 +913,38 @@ function buildScoredCandidates(
       continue;
     }
 
+    const decision = evaluateHintPolicyDecision({
+      candidate: suggestion,
+      kind,
+      policy,
+    });
+
+    if (decision.counterfactualSuppressed) {
+      diagnostics.policySuppressedByCounterfactualCount += 1;
+      continue;
+    }
+
+    if (!decision.allow) {
+      diagnostics.filteredByHarmRiskHintCount += 1;
+      continue;
+    }
+
     scoredCandidates.push({
       suggestion,
       kind,
       utilityScore: utilityScoreForSuggestion(suggestion, kind),
+      expectedHarmfulReductionScore: decision.expectedHarmfulReduction,
+      contextualBanditScore: decision.contextualBanditScore,
+      harmfulRateBaseline: decision.harmfulRateBaseline,
+      harmfulRateForKind: decision.harmfulRateForKind,
     });
   }
 
   scoredCandidates.sort((left, right) => {
+    if (right.contextualBanditScore !== left.contextualBanditScore) {
+      return right.contextualBanditScore - left.contextualBanditScore;
+    }
+
     if (right.utilityScore !== left.utilityScore) {
       return right.utilityScore - left.utilityScore;
     }
@@ -511,6 +962,7 @@ function buildScoredCandidates(
 function selectArtifactOnlySuggestions(
   suggestions: LearningSuggestion[],
   maxSuggestions: number,
+  policy: HintPolicyContext,
 ): HintSelectionResult {
   const diagnostics = emptyHintSelectionDiagnostics();
   diagnostics.availableHintCount = suggestions.length;
@@ -519,6 +971,8 @@ function selectArtifactOnlySuggestions(
     MAX_HINTS_PER_TURN,
     diagnostics.selectionBudgetRaw,
   );
+  diagnostics.policyContextKey = policy.contextKey;
+  diagnostics.policyMemorySessionCount = policy.memory.totalSessions;
 
   for (const suggestion of suggestions) {
     incrementAvailableCountForKind(diagnostics, suggestionKind(suggestion));
@@ -543,14 +997,38 @@ function selectArtifactOnlySuggestions(
       continue;
     }
 
+    const decision = evaluateHintPolicyDecision({
+      candidate: suggestion,
+      kind,
+      policy,
+    });
+
+    if (decision.counterfactualSuppressed) {
+      diagnostics.policySuppressedByCounterfactualCount += 1;
+      continue;
+    }
+
+    if (!decision.allow) {
+      diagnostics.filteredByHarmRiskHintCount += 1;
+      continue;
+    }
+
     scoredCandidates.push({
       suggestion,
       kind,
       utilityScore: utilityScoreForSuggestion(suggestion, kind),
+      expectedHarmfulReductionScore: decision.expectedHarmfulReduction,
+      contextualBanditScore: decision.contextualBanditScore,
+      harmfulRateBaseline: decision.harmfulRateBaseline,
+      harmfulRateForKind: decision.harmfulRateForKind,
     });
   }
 
   scoredCandidates.sort((left, right) => {
+    if (right.contextualBanditScore !== left.contextualBanditScore) {
+      return right.contextualBanditScore - left.contextualBanditScore;
+    }
+
     if (right.utilityScore !== left.utilityScore) {
       return right.utilityScore - left.utilityScore;
     }
@@ -590,6 +1068,7 @@ function selectArtifactOnlySuggestions(
 function selectTopSuggestionsWithPolicy(
   suggestions: LearningSuggestion[],
   maxSuggestions: number,
+  policy: HintPolicyContext,
 ): HintSelectionResult {
   const diagnostics = emptyHintSelectionDiagnostics();
   diagnostics.availableHintCount = suggestions.length;
@@ -606,7 +1085,7 @@ function selectTopSuggestionsWithPolicy(
     };
   }
 
-  const scoredCandidates = buildScoredCandidates(suggestions, diagnostics);
+  const scoredCandidates = buildScoredCandidates(suggestions, diagnostics, policy);
   const hasArtifactCandidate = scoredCandidates.some((candidate) => {
     return candidate.kind === "artifact";
   });
@@ -654,6 +1133,32 @@ function selectTopSuggestionsWithPolicy(
     selectedSuggestions: [selected.suggestion],
     diagnostics,
   };
+}
+
+async function queryHintPolicyEvents(loop: LearningLoop): Promise<TraceEvent[]> {
+  const queryEvents = (
+    loop as unknown as {
+      queryEvents?: (query?: TraceQuery) => Promise<TraceEvent[]>;
+    }
+  ).queryEvents;
+
+  if (typeof queryEvents !== "function") {
+    return [];
+  }
+
+  try {
+    return await queryEvents({
+      types: ["checkpoint", "tool_result"],
+      limit: 50_000,
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function loadHintPolicyMemory(loop: LearningLoop): Promise<HintPolicyMemory> {
+  const events = await queryHintPolicyEvents(loop);
+  return buildHintPolicyMemory(events);
 }
 
 function buildSuggestionRetrievalPlans(
@@ -758,6 +1263,19 @@ export function createPiTraceExtension(
   const turnStartTimes = new Map<number, number>();
   const toolCalls = new Map<string, ToolCallState>();
   let latestUserInputEventId: string | null = null;
+  let hintPolicyMemoryPromise: Promise<HintPolicyMemory> | null = null;
+
+  async function getHintPolicyMemory(): Promise<HintPolicyMemory> {
+    if (retrievalMemoryMode === "live") {
+      return loadHintPolicyMemory(retrievalLoop);
+    }
+
+    if (!hintPolicyMemoryPromise) {
+      hintPolicyMemoryPromise = loadHintPolicyMemory(retrievalLoop);
+    }
+
+    return hintPolicyMemoryPromise;
+  }
 
   async function ingest(event: {
     type:
@@ -916,14 +1434,22 @@ export function createPiTraceExtension(
             filteredLowConfidenceRetrievalHintCount: 0,
             filteredLowConfidenceOtherHintCount: 0,
             filteredLowUtilityHintCount: 0,
+            filteredByHarmRiskHintCount: 0,
             policySuppressedByBudgetCount: 0,
             policySuppressedByArtifactPriorityCount: 0,
+            policySuppressedByCounterfactualCount: 0,
             selectedArtifactHintCount: 0,
             selectedFailureWarningHintCount: 0,
             selectedRetrievalHintCount: 0,
             selectedOtherHintCount: 0,
             selectedHintKind: null,
             selectedHintUtilityScore: null,
+            selectedExpectedHarmfulReductionScore: null,
+            selectedContextualBanditScore: null,
+            selectedHarmfulRateBaseline: null,
+            selectedHarmfulRateForKind: null,
+            policyContextKey: null,
+            policyMemorySessionCount: 0,
             hintSelectionBudgetRaw: 0,
             hintSelectionBudgetApplied: 0,
             selfFilteredHintCount: 0,
@@ -1005,10 +1531,23 @@ export function createPiTraceExtension(
         return !suggestion.evidenceEventIds.includes(latestUserInputEventId);
       });
 
+      const hintPolicyContext: HintPolicyContext = {
+        contextKey: hintPolicyContextKeyFromSessionId(sessionId),
+        memory: await getHintPolicyMemory(),
+      };
+
       const selection =
         hintMode === "artifact_only"
-          ? selectArtifactOnlySuggestions(nonSelfSuggestions, maxSuggestions)
-          : selectTopSuggestionsWithPolicy(nonSelfSuggestions, maxSuggestions);
+          ? selectArtifactOnlySuggestions(
+              nonSelfSuggestions,
+              maxSuggestions,
+              hintPolicyContext,
+            )
+          : selectTopSuggestionsWithPolicy(
+              nonSelfSuggestions,
+              maxSuggestions,
+              hintPolicyContext,
+            );
       const topSuggestions = selection.selectedSuggestions;
 
       const retrievalHintCount = topSuggestions.filter((suggestion) => {
@@ -1064,10 +1603,14 @@ export function createPiTraceExtension(
             selection.diagnostics.filteredLowConfidenceOtherHintCount,
           filteredLowUtilityHintCount:
             selection.diagnostics.filteredLowUtilityHintCount,
+          filteredByHarmRiskHintCount:
+            selection.diagnostics.filteredByHarmRiskHintCount,
           policySuppressedByBudgetCount:
             selection.diagnostics.policySuppressedByBudgetCount,
           policySuppressedByArtifactPriorityCount:
             selection.diagnostics.policySuppressedByArtifactPriorityCount,
+          policySuppressedByCounterfactualCount:
+            selection.diagnostics.policySuppressedByCounterfactualCount,
           selectedArtifactHintCount: selection.diagnostics.selectedArtifactHintCount,
           selectedFailureWarningHintCount:
             selection.diagnostics.selectedFailureWarningHintCount,
@@ -1075,6 +1618,15 @@ export function createPiTraceExtension(
           selectedOtherHintCount: selection.diagnostics.selectedOtherHintCount,
           selectedHintKind: selection.diagnostics.selectedHintKind,
           selectedHintUtilityScore: selection.diagnostics.selectedHintUtilityScore,
+          selectedExpectedHarmfulReductionScore:
+            selection.diagnostics.selectedExpectedHarmfulReductionScore,
+          selectedContextualBanditScore:
+            selection.diagnostics.selectedContextualBanditScore,
+          selectedHarmfulRateBaseline:
+            selection.diagnostics.selectedHarmfulRateBaseline,
+          selectedHarmfulRateForKind: selection.diagnostics.selectedHarmfulRateForKind,
+          policyContextKey: selection.diagnostics.policyContextKey,
+          policyMemorySessionCount: selection.diagnostics.policyMemorySessionCount,
           hintSelectionBudgetRaw: selection.diagnostics.selectionBudgetRaw,
           hintSelectionBudgetApplied: selection.diagnostics.selectionBudgetApplied,
           selfFilteredHintCount: Math.max(
