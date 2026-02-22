@@ -1376,6 +1376,15 @@ import {
   OPSBOARD_SCALE_FILES,
 } from "./reinventionScaleFiles.js";
 
+// ─── AGENTS.md tool registries (for v4+ builds) ────────────────────────
+import {
+  DATAQUERY_AGENTS_MD,
+  ISSUETRACKER_AGENTS_MD,
+  OPSBOARD_AGENTS_MD,
+} from "./reinventionAgentsMd.js";
+
+export { DATAQUERY_AGENTS_MD, ISSUETRACKER_AGENTS_MD, OPSBOARD_AGENTS_MD };
+
 // Merge scale files into the base file dicts.
 Object.assign(ISSUETRACKER_FILES, ISSUETRACKER_SCALE_FILES);
 Object.assign(OPSBOARD_FILES, OPSBOARD_SCALE_FILES);

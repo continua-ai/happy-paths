@@ -4025,6 +4025,12 @@ import {
 
 export { ALL_REINVENTION_TASKS, ALL_REINVENTION_TEMPLATES, ALL_REINVENTION_TRAPS };
 
+export {
+  DATAQUERY_AGENTS_MD,
+  ISSUETRACKER_AGENTS_MD,
+  OPSBOARD_AGENTS_MD,
+} from "./reinventionTemplates.js";
+
 /** Combined: all templates (error recovery + reinvention). */
 export const ALL_TEMPLATES_WITH_REINVENTION: RepoTemplate[] = [
   ...ALL_TEMPLATES,

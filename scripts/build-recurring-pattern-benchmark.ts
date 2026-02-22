@@ -27,14 +27,19 @@ import {
   ALL_TEMPLATES,
   ALL_TEMPLATES_WITH_REINVENTION,
   ALL_TRAPS,
+  DATAQUERY_AGENTS_MD,
+  ISSUETRACKER_AGENTS_MD,
+  OPSBOARD_AGENTS_MD,
 } from "../src/benchmarks/recurringPatternTemplates.js";
 
 function parseArgs(argv: string[]): {
   out: string;
   includeReinvention: boolean;
+  withAgentsMd: boolean;
 } {
   let out = ".happy-paths/benchmarks/recurring-pattern";
   let includeReinvention = false;
+  let withAgentsMd = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--out" && argv[i + 1]) {
@@ -44,9 +49,12 @@ function parseArgs(argv: string[]): {
     if (argv[i] === "--include-reinvention") {
       includeReinvention = true;
     }
+    if (argv[i] === "--with-agents-md") {
+      withAgentsMd = true;
+    }
   }
 
-  return { out, includeReinvention };
+  return { out, includeReinvention, withAgentsMd };
 }
 
 function createRepoDirectory(
@@ -117,12 +125,27 @@ function main(): void {
   console.log(`Creating ${templates.length} repo templates...`);
   const repoPaths: Record<string, string> = {};
 
+  // AGENTS.md injection map (only for reinvention repos, only when --with-agents-md)
+  const agentsMdMap: Record<string, string> = {
+    issuetracker: ISSUETRACKER_AGENTS_MD,
+    opsboard: OPSBOARD_AGENTS_MD,
+    dataquery: DATAQUERY_AGENTS_MD,
+  };
+
   for (const template of templates) {
     console.log(`  📁 ${template.templateId}: ${template.description.slice(0, 80)}...`);
+
+    // Inject AGENTS.md for reinvention repos when requested.
+    const files = { ...template.files };
+    if (args.withAgentsMd && agentsMdMap[template.templateId]) {
+      files["AGENTS.md"] = agentsMdMap[template.templateId];
+      console.log("     + AGENTS.md (tool registry)");
+    }
+
     const repoDir = createRepoDirectory(
       outDir,
       template.templateId,
-      template.files,
+      files,
       template.executablePaths,
     );
     repoPaths[template.templateId] = repoDir;
