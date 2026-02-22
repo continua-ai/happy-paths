@@ -54,12 +54,17 @@ before the agent wastes steps rediscovering the fix.
 
 ## Where it helps (and where it doesn't)
 
-We ran 10 benchmark iterations (~400 runs) to find the right intervention
-design. Honest findings:
+We ran 17 benchmark iterations (~800+ runs across two benchmark suites) to
+find the right intervention designs. Honest findings:
 
 **Where it helps**: projects with undocumented setup steps, internal CLI tools,
 or error messages that point the wrong way. These are the cases where a model
 has no prior training data and can't infer the fix from repo files alone.
+
+**Where it also helps**: repos where agents waste tokens reinventing existing
+tools. Session mining found 9,012 throwaway scripts (~2.3M wasted tokens)
+across 300 sessions. A simple `AGENTS.md` tool registry eliminated this
+entirely (0 heredocs, 2.8x CLI usage).
 
 **Where it doesn't help**: well-documented projects, standard toolchain errors,
 or situations where the model can figure out the fix by reading `README.md` and
@@ -265,7 +270,7 @@ the kinds of knowledge gaps models can't resolve from training data alone.
 - **Design**: A/B — each task runs OFF (no hints) and ON (hints enabled),
   interleaved, with 3 replicates per variant
 - **Metric**: wall-clock time, error count, and tool-call count per run
-- **Repos**: 10 synthetic Python projects, 40 tasks, 19 unique traps
+- **Repos**: 13 synthetic Python projects, 52 tasks, 24 unique traps
 - **Trap families**: undocumented tooling, misdirecting error messages,
   non-standard test setup, format-before-lint, build target syntax,
   hallucinated tool names
@@ -344,6 +349,28 @@ sad path families. The top errors agents hit repeatedly:
 The 4 git-specific patterns (push conflicts, dirty rebase, worktree confusion)
 and the CI timeout pattern require git/CI infrastructure in the benchmark — a
 future improvement.
+
+### Reinvention waste benchmark (new)
+
+We discovered a second class of waste beyond error recovery: **agents writing
+throwaway scripts for operations that have existing repo tools.** Mining 300
+real Pi sessions revealed 9,012 inline Python heredocs (~2.3M wasted tokens),
+with 55% being Linear API and GCloud boilerplate rewritten every session.
+
+We built a separate benchmark to measure this — 3 synthetic repos
+(issuetracker, opsboard, dataquery) with 12 tasks, 151-191 files each, and
+existing CLI tools (`./track`, `./ops`, `jq`) buried in docs:
+
+| Version | Files/repo | Intervention | Heredocs (36 runs) | CLI usage | Token waste |
+|---|---|---|---|---|---|
+| v3 (baseline) | 151-191 | None | 9 | 59 | 1,048 |
+| v3 + hints | 151-191 | Tool-call hints only | 6 | 67 | 971 (−7%) |
+| **v4 (registry)** | 151-191 | **AGENTS.md tool registry** | **0** | **163 (2.8x)** | **0 (−100%)** |
+
+**The fix isn't an algorithm — it's making tools discoverable.** A 10-line
+markdown table in `AGENTS.md` mapping operations → CLI commands completely
+eliminated throwaway scripts and nearly tripled CLI usage. Cost: ~200 tokens
+in the system prompt. Savings: ~1,000+ tokens per session.
 
 ### What the data teaches
 
