@@ -15,44 +15,50 @@ task 5 — even though task 5 is a completely different bug in a different repo.
 
 ## Design
 
-### Repos
+### Repos (14 total)
 
-Two small Python projects, each with realistic structure (pyproject.toml,
-requirements.txt, tests, setup.py):
+Three benchmark suites targeting different failure modes:
+
+**Error recovery (10 repos)** — undocumented tools, misdirecting errors,
+non-standard setup:
 
 - **pymath**: math utilities (stats, linalg, conversions)
 - **dataproc**: data processing (CSV parsing, JSON validation, dates, encoding)
+- **taskapi**: task management API
+- **buildkit**: build tool with custom CLI
+- **calclib**: calculator library
+- **webutil**: web utilities with session fixture timeout trap
+- **ledgerkit**: ledger tool with undocumented `./kit` CLI (no README)
+- **logparse**: log parser with undocumented `./qa` CLI (no README)
+- **monobuild**: monorepo build tool (`./mb fmt` required before lint/test)
+- **toolhub**: tool orchestration with hallucinated tool name traps
 
-### Tasks (8 total)
+**Reinvention waste (3 repos)** — tests whether agents reuse existing CLI
+tools vs writing throwaway scripts (151-191 files each):
 
-Each task has a unique, non-trivial bug to fix. The bugs range from
-off-by-one errors to missing edge-case handling.
+- **issuetracker**: issue tracking with `./track` CLI
+- **opsboard**: operations dashboard with `./ops` CLI
+- **dataquery**: JSON data analysis with `jq` workflows
 
-| Task | Repo | Bug |
+**Git workflow (1 repo)** — tests push-conflict and dirty-rebase recovery:
+
+- **gitflow**: Python project with local bare remote and pre-staged divergence
+
+### Tasks (56 total)
+
+Each task has a unique bug to fix or operation to perform. Tasks share
+failure modes across repos.
+
+### Traps (27 unique)
+
+| Family | Traps | Description |
 |---|---|---|
-| pymath-001 | pymath | `mean()` crashes on empty list |
-| pymath-002 | pymath | `stdev()` ignores `population` parameter |
-| pymath-003 | pymath | `transpose()` fails on non-square matrices |
-| pymath-004 | pymath | `celsius_to_fahrenheit()` wrong formula |
-| dataproc-001 | dataproc | CSV parser doesn't handle quoted commas |
-| dataproc-002 | dataproc | JSON validator rejects empty arrays |
-| dataproc-003 | dataproc | `date_range()` end date is exclusive |
-| dataproc-004 | dataproc | `read_text()` doesn't strip UTF-8 BOM |
-
-### Recurring traps (6 unique)
-
-These are intentional failure patterns embedded in the repos. They're not the
-bug the agent needs to fix — they're obstacles along the way that recur across
-tasks.
-
-| Trap | Family | Tasks | Description |
-|---|---|---|---|
-| missing-pytest-cov | env_dep | all 8 | pyproject.toml has `--cov` addopts but pytest-cov isn't installed |
-| broad-pytest-suite | tool_flag | all 8 | bare `pytest` runs slow integration tests (30s sleep) |
-| pytest-import-error-conftest | env_dep | all 8 | package not installed in editable mode |
-| missing-pyyaml | env_dep | dataproc (4) | code imports yaml but PyYAML not in requirements.txt |
-| missing-config-yaml | config | dataproc (integration) | config.yaml doesn't exist (only .example) |
-| missing-env-secret-key | config | dataproc (integration) | SECRET_KEY env var not set |
+| env_dep (7) | missing-pytest-cov, missing-pyyaml, pytest-import-error-conftest, internal-vendor-dep, missing-test-env, phantom-plugins-dep, system-python-missing-module | Missing dependencies or env setup |
+| tool_flag (5) | broad-pytest-suite, undocumented-fixtures-tool, undocumented-testdata-tool, fmt-before-lint, build-target-syntax | Non-obvious tool usage patterns |
+| config (2) | missing-config-yaml, missing-env-secret-key | Missing config files or env vars |
+| tool_setup (3) | session-fixture-timeout, hallucinated-tool, config-not-found-hallucinated | Misdirecting error messages |
+| reinvention (5) | reinvent-issue-tracker-query, reinvent-issue-tracker-mutation, reinvent-deploy-status, reinvent-log-query, reinvent-json-extraction | Agent writes heredoc instead of using CLI |
+| git_workflow (2) | push-conflict, dirty-rebase | Standard git errors requiring recovery |
 
 ### What makes this different from SWE-bench
 
@@ -64,19 +70,68 @@ tasks.
 | Agent obstacles | Incidental | Intentional, measurable |
 | Learning signal | None to learn from | Clear cross-task signal |
 
+## Results summary
+
+### Error recovery (v11 — current best policy)
+
+Error-time hints with prescriptive recipes. Key repos:
+
+| Repo | OFF median | ON median | Delta | Notes |
+|---|---|---|---|---|
+| ledgerkit | 65s | 58s | **−11%** | Undocumented CLI, no README |
+| logparse | 51s | 49s | **−4%** | Undocumented CLI, no README |
+| webutil | 91s | 92s | +1% | Misdirecting errors |
+| toolhub (r=5) | 48s | 54s | +10% | Well-documented, hints harmful |
+| monobuild | 158s | 170s | +7% | Agent finds ./mb from README |
+
+### Reinvention waste (v3 → v4)
+
+| Version | Intervention | Heredocs (36 runs) | CLI usage | Token waste |
+|---|---|---|---|---|
+| v3 baseline | None | 9 | 59 | 1,048 |
+| v3 + hints | Tool-call hints | 6 | 67 | 971 (−7%) |
+| **v4 registry** | **AGENTS.md tool registry** | **0** | **163 (2.8×)** | **0 (−100%)** |
+
+### Git workflow
+
+| Task | OFF median | ON median | Delta |
+|---|---|---|---|
+| push-after-diverge | 77s | 85s | +10% |
+| push-conflict-multiply | 38s | 36s | −5% |
+| rebase-dirty-subtract | 46s | 47s | +2% |
+| rebase-dirty-upper | 50s | 60s | +20% |
+
+Hints net-harmful (+10% overall). Models handle standard git errors.
+
+### Key findings
+
+1. **Hints help when errors misdirect and tools are undocumented** (ledgerkit,
+   logparse)
+2. **Hints hurt on well-documented repos** (toolhub, monobuild) and standard
+   errors (git push conflicts)
+3. **AGENTS.md tool registry is the highest-ROI intervention** — eliminates
+   reinvention waste entirely (0 heredocs, 2.8× CLI usage)
+4. **One comprehensive hint > many small hints**
+5. **Error-time delivery > pre-session injection**
+6. **Don't hint what the model already knows**
+
 ## Usage
 
 ### Build the benchmark repos
 
 ```bash
+# Error recovery only
 tsx scripts/build-recurring-pattern-benchmark.ts --out /tmp/rp-benchmark
+
+# Include reinvention repos
+tsx scripts/build-recurring-pattern-benchmark.ts --out /tmp/rp-benchmark --include-reinvention
+
+# Include reinvention + git workflow
+tsx scripts/build-recurring-pattern-benchmark.ts --out /tmp/rp-benchmark --include-all
+
+# With AGENTS.md tool registry (for reinvention v4)
+tsx scripts/build-recurring-pattern-benchmark.ts --out /tmp/rp-benchmark --include-reinvention --with-agents-md
 ```
-
-This creates:
-
-- `/tmp/rp-benchmark/repos/pymath/` — git repo with bugs
-- `/tmp/rp-benchmark/repos/dataproc/` — git repo with bugs
-- `/tmp/rp-benchmark/benchmark.json` — task pack
 
 ### Run with Pi
 
@@ -84,73 +139,54 @@ This creates:
 tsx scripts/run-recurring-pattern-pi.ts \
   --benchmark /tmp/rp-benchmark/benchmark.json \
   --out-dir /tmp/rp-results \
-  --replicates 2 \
-  --timeout-seconds 180 \
-  --trace-state-mode shared
+  --replicates 3 \
+  --timeout-seconds 240 \
+  --trace-state-mode isolated \
+  --provider openai-codex --model gpt-5.3-codex
 ```
 
 Key options:
 
-- `--trace-state-mode shared`: all tasks share the same trace store (so ON
-  runs can learn from earlier runs)
-- `--trace-state-mode isolated`: each task gets its own trace store (no
-  cross-task learning; for baseline measurement)
-- `--task-filter pymath`: only run pymath tasks
-- `--on-hint-mode full|artifact_only|none`: control hint types
+- `--trace-state-mode shared`: all tasks share trace store (cross-task learning)
+- `--trace-state-mode isolated`: separate stores (baseline measurement)
+- `--task-filter 'regex'`: filter tasks by regex (e.g., `'ledgerkit|logparse'`)
+- `--no-before-agent-start`: disable pre-session hints (error-time only)
 
-### Analyze results
+### Analyze reinvention results
 
-Results are in the manifest JSON (`/tmp/rp-results/manifest.json`) and
-per-run logs (`/tmp/rp-results/logs/`).
-
-Key metrics to look for:
-
-1. **Trap encounter rate**: how often does the agent hit each trap?
-2. **Trap recovery time**: how many retries before the agent fixes the trap?
-3. **Cross-task transfer**: does trap recovery improve on later tasks (shared
-   mode) vs isolated mode?
-4. **Bug fix rate**: does trap assistance improve or degrade bug fix success?
+```bash
+tsx scripts/analyze-reinvention-results.ts \
+  --results /tmp/rp-results \
+  --trace-root /tmp/rp-traces
+```
 
 ## Extending the benchmark
 
 ### Adding tasks
 
-1. Add a new entry to `PYMATH_TASKS` or `DATAPROC_TASKS` in
-   `src/benchmarks/recurringPatternTemplates.ts`
+1. Add entries to the appropriate template file:
+   - `recurringPatternTemplates.ts` (error recovery)
+   - `reinventionTemplates.ts` (reinvention waste)
+   - `gitWorkflowTemplates.ts` (git workflow)
 2. Ensure the task references valid `expectedTrapIds`
 3. Provide a `goldPatch` and `verifyCommand`
 4. Run `npx vitest run tests/recurring-pattern.test.ts` to validate
 
 ### Adding repos
 
-1. Add a new template to `ALL_TEMPLATES` in `recurringPatternTemplates.ts`
-2. Include at least some of the shared traps (missing-pytest-cov,
-   broad-pytest-suite) to maintain cross-repo recurrence
-3. Add repo-specific traps as needed
-
-### Adding traps
-
-1. Define a new `RecurringTrap` constant
-2. Add it to the relevant template's `traps` array
-3. Add it to `ALL_TRAPS`
-4. Reference it from task `expectedTrapIds`
-5. Ensure the trap actually fires (verify manually)
-
-## Verification
-
-The benchmark builder verifies repos are clean git repos. The test suite
-(`tests/recurring-pattern.test.ts`) validates:
-
-- All tasks reference valid templates and traps
-- Every trap recurs across at least 2 tasks
-- Task prompts don't leak trap information
-- Templates embed the expected traps (e.g., pyproject.toml has `--cov`)
+1. Add a new template to the appropriate templates file
+2. Include shared traps for cross-repo recurrence
+3. For git-workflow repos, add setup logic in `gitWorkflowSetup.ts`
+4. For reinvention repos, add scale files in `reinventionScaleFiles.ts`
 
 ## Related
 
 - CON-1728: Happy Paths recurring-pattern benchmark + multi-checkpoint hints
 - CON-1469: Trace-driven learning loop for Pi
 - `src/benchmarks/recurringPattern.ts`: types and utilities
-- `src/benchmarks/recurringPatternTemplates.ts`: repo templates and tasks
+- `src/benchmarks/recurringPatternTemplates.ts`: error recovery templates
+- `src/benchmarks/reinventionTemplates.ts`: reinvention waste templates
+- `src/benchmarks/gitWorkflowTemplates.ts`: git workflow templates
 - `scripts/build-recurring-pattern-benchmark.ts`: benchmark generator
 - `scripts/run-recurring-pattern-pi.ts`: benchmark runner
+- `scripts/analyze-reinvention-results.ts`: reinvention waste analyzer
