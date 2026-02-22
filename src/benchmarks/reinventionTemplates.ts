@@ -104,46 +104,61 @@ export const TRAP_REINVENT_JSON_EXTRACTION: RecurringTrap = {
 const ISSUETRACKER_FILES: Record<string, string> = {
   "README.md": `# IssueTracker
 
-A local issue tracking system with REST API and CLI.
+A lightweight issue tracking system for small teams.
 
-## Quick Start
+## Overview
 
-\`\`\`bash
-# Start the API server (runs on port 9234)
-./track serve &
+IssueTracker provides a REST API for managing issues, comments, and
+assignments. It uses a JSON file store for simplicity.
 
-# Query an issue
-./track query --id PROJ-1
+## Architecture
 
-# List all open issues
-./track list --status open
+- \`src/api.py\` — HTTP API server
+- \`src/models.py\` — Data models
+- \`data/issues.json\` — Issue store
+- \`config/\` — Configuration files
 
-# Update issue status
-./track update --id PROJ-1 --status done
+## API Endpoints
 
-# Add a comment
-./track comment --id PROJ-1 --body "Fixed in commit abc123"
-
-# Search issues
-./track search --term "login bug"
-\`\`\`
-
-## API (for advanced use)
-
-The server runs at \`http://localhost:9234\`. Endpoints:
+The API server runs on port 9234:
 
 - \`GET /api/issues/:id\` — Get issue by ID
 - \`GET /api/issues?status=open\` — List/filter issues
-- \`POST /api/issues/:id/comments\` — Add comment
-- \`PATCH /api/issues/:id\` — Update issue
+- \`POST /api/issues/:id/comments\` — Add comment (body: \`{"body": "..."}\`)
+- \`PATCH /api/issues/:id\` — Update issue fields
 
-The CLI is the preferred interface. Use the API only when the CLI
-doesn't support your use case.
+## Development
 
-## Data
+\`\`\`bash
+pip install -r requirements.txt
+make serve    # Start the API server
+make test     # Run tests
+make lint     # Run linter
+\`\`\`
 
-Issues are stored in \`data/issues.json\`. Do not edit directly;
-use the CLI or API.
+## Documentation
+
+- \`docs/architecture.md\` — System architecture
+- \`docs/setup.md\` — Setup guide
+- \`docs/cli-reference.md\` — CLI tool reference
+`,
+
+  // CLI reference — buried in docs/
+  "docs/cli-reference.md": `# CLI Reference
+
+The \`./track\` command provides CLI access to the issue tracker.
+
+## Commands
+
+\`\`\`bash
+./track query --id PROJ-1          # Get issue by ID
+./track list --status open         # List issues (filter by status)
+./track list --assignee alice      # List issues by assignee
+./track update --id PROJ-1 --status done   # Update status
+./track comment --id PROJ-1 --body "text"  # Add comment
+./track search --term "login bug"  # Search issues
+./track create --title "New issue" # Create issue
+\`\`\`
 `,
 
   track: `#!/usr/bin/env python3
@@ -562,6 +577,38 @@ if __name__ == "__main__":
         sys.exit(1)
     sys.exit(verify_task(sys.argv[1]))
 `,
+
+  // ─── Distractor files (make the repo look like a real project) ───
+  "src/__init__.py": "",
+  "src/models.py":
+    '"""Issue data models."""\nfrom dataclasses import dataclass\n\n@dataclass\nclass Issue:\n    id: str\n    title: str\n    description: str\n    status: str\n    assignee: str | None = None\n',
+  "src/api.py":
+    '"""REST API server. For CLI usage, see docs/cli-reference.md"""\nimport json\nfrom http.server import HTTPServer\n',
+  "src/migrations.py":
+    '"""Database migration helpers."""\ndef upgrade_schema(version): pass\ndef downgrade_schema(version): pass\n',
+  "src/notifications.py":
+    '"""Notification system for issue updates."""\ndef notify_assignee(issue_id, event): pass\ndef notify_watchers(issue_id, event): pass\n',
+  "tests/__init__.py": "",
+  "tests/test_models.py":
+    '"""Tests for issue models."""\nimport unittest\nclass TestIssueModel(unittest.TestCase):\n    def test_create(self): pass\n',
+  "tests/test_api.py":
+    '"""Tests for REST API."""\nimport unittest\nclass TestAPI(unittest.TestCase):\n    def test_get_issue(self): pass\n    def test_list_issues(self): pass\n',
+  "config/database.yaml": "database:\n  type: sqlite\n  path: data/issues.db\n",
+  "config/notifications.yaml":
+    "notifications:\n  enabled: false\n  webhook_url: null\n",
+  "scripts/import_jira.py":
+    '"""Import issues from JIRA export."""\n# Usage: python scripts/import_jira.py --file export.csv\nimport csv, sys\n',
+  "scripts/export_csv.py":
+    '"""Export issues to CSV."""\n# Usage: python scripts/export_csv.py --output issues.csv\nimport csv, json\n',
+  "scripts/backup.py": '"""Backup issue data."""\nimport shutil, datetime\n',
+  "docs/architecture.md":
+    "# Architecture\n\nIssueTracker uses a JSON file store with a REST API layer.\n\n## Components\n\n- `src/api.py` — HTTP server\n- `src/models.py` — Data models\n- `data/issues.json` — Persistent store\n\nFor CLI tools, see `docs/cli-reference.md`.\n",
+  "docs/setup.md":
+    "# Setup\n\n```bash\npip install -r requirements.txt\npython -m src.api  # Start the API server\n```\n",
+  Makefile:
+    "# IssueTracker\n.PHONY: serve test\n\nserve:\n\tpython -m src.api\n\ntest:\n\tpython -m pytest tests/\n\nlint:\n\tpython -m flake8 src/ tests/\n",
+  "requirements.txt": "pyyaml>=6.0\npytest>=7.0\nflake8>=6.0\n",
+  ".gitignore": "*.pyc\n__pycache__/\n.venv/\n*.db\n",
 };
 
 // ─── opsboard repo ─────────────────────────────────────────────────────
@@ -571,41 +618,60 @@ if __name__ == "__main__":
 const OPSBOARD_FILES: Record<string, string> = {
   "README.md": `# OpsBoard
 
-Local operations dashboard with deploy status, log queries, and health checks.
+Operations monitoring and incident response platform.
 
-## Quick Start
+## Overview
+
+OpsBoard aggregates deploy status, application logs, health checks,
+and runtime configuration into a single dashboard.
+
+## Architecture
+
+- \`src/dashboard.py\` — Web dashboard (HTML)
+- \`src/metrics.py\` — Metrics collection
+- \`src/alerting.py\` — Alert rules engine
+- \`state/\` — Runtime state files
+- \`infra/\` — Terraform / Docker / K8s configs
+- \`monitoring/\` — Alert rules and dashboards
+
+## State Files
+
+Deploy and health data is stored in \`state/\`:
+- \`deploy_staging.json\`, \`deploy_prod.json\` — Deploy status
+- \`logs.jsonl\` — Application logs (JSONL format)
+- \`health.json\` — Service health
+- \`config_staging.json\`, \`config_prod.json\` — Runtime config
+
+## Development
 
 \`\`\`bash
-# Check deploy status for an environment
-./ops status --env staging
-./ops status --env prod
-
-# Query logs (filtered by level and time)
-./ops logs --since 1h --level error
-./ops logs --since 6h --level warning --service api
-
-# Check service health
-./ops health --service api
-./ops health --service worker
-
-# View deployment history
-./ops history --env staging --limit 5
-
-# View current config
-./ops config --env staging
+pip install -r requirements.txt
+make serve    # Start web dashboard
+make test     # Run tests
 \`\`\`
 
-## Data
+## Documentation
 
-State files are in \`state/\`:
-- \`deploy_staging.json\` — current staging deploy
-- \`deploy_prod.json\` — current prod deploy
-- \`logs.jsonl\` — application logs
-- \`health.json\` — service health status
-- \`config_staging.json\` / \`config_prod.json\` — runtime config
+- \`docs/ops-guide.md\` — CLI operations guide
+- \`docs/runbooks/\` — Incident response runbooks
+`,
 
-Use the \`./ops\` CLI to query this data. The CLI handles formatting,
-filtering, and cross-referencing automatically.
+  "docs/ops-guide.md": `# CLI Operations Guide
+
+The \`./ops\` command provides CLI access to the operations dashboard.
+
+## Commands
+
+\`\`\`bash
+./ops status --env staging     # Deploy status
+./ops status --env prod        # Deploy status
+./ops logs --since 1h --level error    # Query logs
+./ops logs --level warning --service api
+./ops health                   # All services
+./ops health --service worker  # Single service
+./ops history --env staging --limit 5  # Deploy history
+./ops config --env staging     # Runtime config
+\`\`\`
 `,
 
   ops: `#!/usr/bin/env python3
@@ -986,6 +1052,31 @@ if __name__ == "__main__":
         sys.exit(1)
     sys.exit(verify_task(sys.argv[1]))
 `,
+
+  // ─── Distractor files ───
+  "src/__init__.py": "",
+  "src/metrics.py":
+    '"""Metrics collection."""\ndef collect_metrics(service): pass\ndef aggregate_hourly(metrics): pass\n',
+  "src/alerting.py":
+    '"""Alert rules."""\nALERT_RULES = {\n    "high_error_rate": {"threshold": 0.05},\n    "high_latency": {"threshold": 2.0},\n}\n',
+  "src/dashboard.py": '"""Web dashboard. For CLI, see docs/ops-guide.md"""\n',
+  "infra/terraform/main.tf":
+    '# Infrastructure\nresource "google_cloud_run_service" "api" {\n  name = "api-service"\n}\n',
+  "infra/docker/Dockerfile": "FROM python:3.12-slim\nCOPY . /app\n",
+  "infra/k8s/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\n",
+  "monitoring/alerts.yaml": "alerts:\n  - name: high_error_rate\n    threshold: 0.05\n",
+  "monitoring/dashboards/overview.json": '{"title": "Service Overview", "panels": []}',
+  "scripts/rotate_logs.py": '"""Log rotation."""\nimport os, glob\n',
+  "scripts/db_backup.py": '"""Database backup."""\nimport subprocess\n',
+  "tests/test_alerting.py": '"""Tests for alerts."""\nimport unittest\n',
+  "tests/test_metrics.py": '"""Tests for metrics."""\nimport unittest\n',
+  "config/services.yaml":
+    "services:\n  api:\n    port: 8080\n  worker:\n    concurrency: 4\n",
+  "requirements.txt": "flask>=3.0\nprometheus-client>=0.20\npyyaml>=6.0\n",
+  ".gitignore": "*.pyc\n__pycache__/\n.venv/\n*.log\n",
+  Makefile: "serve:\n\tpython -m src.dashboard\ntest:\n\tpython -m pytest tests/\n",
+  "docs/runbooks/incident-response.md":
+    "# Incident Response\n\n1. Check alerts\n2. Review logs\n3. Escalate if needed\n",
 };
 
 // ─── dataquery repo ────────────────────────────────────────────────────
@@ -996,27 +1087,21 @@ if __name__ == "__main__":
 const DATAQUERY_FILES: Record<string, string> = {
   "README.md": `# DataQuery
 
-Data analysis project with JSON datasets and \`jq\`-based workflows.
+Data analysis platform with automated ETL pipelines and reporting.
 
-## Quick Start
+## Overview
 
-\`\`\`bash
-# Query users
-jq '.[] | select(.role == "admin")' data/users.json
+DataQuery ingests data from external sources, transforms it through
+configurable pipelines, and produces aggregated reports.
 
-# Get metrics summary
-jq '{total: length, active: [.[] | select(.active)] | length}' data/users.json
+## Architecture
 
-# Extract nested fields
-jq '.deployments[] | {env: .environment, version: .version}' data/releases.json
-
-# Join data across files
-jq --slurpfile users data/users.json '
-  .[] | . as $metric |
-  ($users[0][] | select(.id == $metric.user_id)) as $user |
-  {user: $user.name, metric: $metric.value}
-' data/metrics.json
-\`\`\`
+- \`src/etl.py\` — ETL pipeline engine
+- \`src/aggregations.py\` — Aggregation functions
+- \`src/exporters.py\` — CSV/Parquet exporters
+- \`data/\` — JSON data files
+- \`config/\` — Pipeline configuration
+- \`scripts/\` — Automation scripts
 
 ## Data Files
 
@@ -1025,14 +1110,42 @@ jq --slurpfile users data/users.json '
 - \`data/metrics.json\` — Performance metrics per user/service
 - \`data/config.json\` — Application configuration
 
-## Tools
+## Development
 
-All data files are plain JSON. Use \`jq\` for queries — it's faster and
-more composable than writing Python scripts.
+\`\`\`bash
+pip install -r requirements.txt
+make etl     # Run ETL pipeline
+make test    # Run tests
+\`\`\`
 
-For complex multi-file analysis, see the examples above or use
-\`jq --slurpfile\` to join datasets.
+## Documentation
+
+- \`docs/querying.md\` — Ad-hoc data queries
+- \`docs/pipeline.md\` — Pipeline configuration
 `,
+
+  "docs/querying.md": `# Ad-hoc Data Queries
+
+For quick data exploration, use \`jq\` directly on the JSON files:
+
+\`\`\`bash
+# Filter users by role
+jq '.[] | select(.role == "admin")' data/users.json
+
+# Summarize
+jq '{total: length, active: [.[] | select(.active)] | length}' data/users.json
+
+# Join across files
+jq --slurpfile users data/users.json '
+  .[] | . as $m |
+  ($users[0][] | select(.id == $m.user_id)) as $u |
+  {user: $u.name, metric: $m.metric, value: $m.value}
+' data/metrics.json
+\`\`\`
+`,
+
+  "docs/pipeline.md":
+    "# Pipeline Configuration\n\nSee `config/pipeline.yaml` for pipeline settings.\n",
 
   "data/users.json": JSON.stringify(
     [
@@ -1295,6 +1408,29 @@ export const DATAQUERY_TEMPLATE: RepoTemplate = {
   setupCommands: [],
   traps: [TRAP_REINVENT_JSON_EXTRACTION],
 };
+
+// Add distractor files to DATAQUERY_FILES
+Object.assign(DATAQUERY_FILES, {
+  "src/__init__.py": "",
+  "src/etl.py":
+    '"""ETL pipeline."""\ndef extract(source): pass\ndef transform(data): pass\ndef load(data, target): pass\n',
+  "src/aggregations.py":
+    '"""Aggregation functions. For ad-hoc queries, see docs/querying.md"""\ndef aggregate_by_team(data): pass\ndef aggregate_by_period(data): pass\n',
+  "src/exporters.py":
+    '"""Export to CSV/Parquet."""\ndef to_csv(data, path): pass\ndef to_parquet(data, path): pass\n',
+  "scripts/daily_report.py":
+    '"""Daily report cron job. For ad-hoc queries, use jq (docs/querying.md)."""\nimport json\n',
+  "scripts/import_data.py": '"""Import from external sources."""\nimport csv\n',
+  "scripts/validate_schema.py": '"""Validate data against schema."""\nimport json\n',
+  "tests/test_etl.py": '"""Tests for ETL."""\nimport unittest\n',
+  "tests/test_aggregations.py": '"""Tests for aggregations."""\nimport unittest\n',
+  "config/pipeline.yaml":
+    "pipeline:\n  schedule: daily\n  source: api\n  target: data/\n",
+  "config/schema.json": '{"type": "array", "items": {"type": "object"}}',
+  "requirements.txt": "pandas>=2.0\njsonschema>=4.0\npytest>=7.0\n",
+  ".gitignore": "*.pyc\n__pycache__/\n.venv/\noutput/\n",
+  Makefile: "etl:\n\tpython -m src.etl\ntest:\n\tpython -m pytest tests/\n",
+});
 
 // ─── Tasks ──────────────────────────────────────────────────────────────
 
