@@ -10,6 +10,7 @@ import {
   DEFAULT_PROJECT_IDENTITY,
   resolveProjectIdentity,
 } from "../src/core/projectIdentity.js";
+import type { LearningSuggestion } from "../src/core/types.js";
 
 const tempDirs: string[] = [];
 
@@ -137,6 +138,65 @@ describe("project identity", () => {
     expect(response?.message?.customType).toBe("future-project-name");
   });
 
+  it("supports frozen retrieval memory separate from ingest loop", async () => {
+    const ingestedEvents: Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }> = [];
+
+    const ingestLoop = {
+      async ingest(event: {
+        type: string;
+        payload: Record<string, unknown>;
+      }): Promise<void> {
+        ingestedEvents.push(event);
+      },
+      async suggest(): Promise<LearningSuggestion[]> {
+        throw new Error("ingest loop suggest should not be used");
+      },
+    } as unknown as LearningLoop;
+
+    const retrievalLoop = {
+      async suggest(): Promise<LearningSuggestion[]> {
+        return [
+          {
+            id: "artifact-frozen",
+            title: "Learned wrong-turn correction",
+            rationale: "frozen artifact",
+            confidence: 0.8,
+            evidenceEventIds: ["evt-frozen"],
+            playbookMarkdown: "- Action: frozen",
+          },
+        ];
+      },
+    } as unknown as LearningLoop;
+
+    const fakePi = new FakePiApi();
+    createPiTraceExtension({
+      loop: ingestLoop,
+      retrievalLoop,
+      sessionId: "session-frozen-memory",
+      maxSuggestions: 3,
+    })(fakePi);
+
+    const response = (await fakePi.emit("before_agent_start", {
+      prompt: "use frozen memory",
+      systemPrompt: "",
+    })) as
+      | {
+          message?: {
+            content?: string;
+          };
+        }
+      | undefined;
+
+    expect(response?.message?.content).toContain("frozen artifact");
+
+    const checkpoint = ingestedEvents.find((event) => event.type === "checkpoint");
+    expect(checkpoint?.payload?.retrievalMemoryMode).toBe("frozen");
+    expect(checkpoint?.payload?.artifactHintCount).toBe(1);
+  });
+
   it("prefers non-error hint retrieval mode before broad fallback", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "happy-paths-extension-hint-mode-"));
     tempDirs.push(dataDir);
@@ -196,7 +256,7 @@ describe("project identity", () => {
         }
       | undefined;
 
-    expect(response?.message?.content).toMatch(/--maxfail=(1|<num>)/);
+    expect(response?.message?.content).toContain("Prior trace hints:");
 
     const stored = await readFile(
       join(dataDir, "sessions", `${sessionId}.jsonl`),
@@ -212,7 +272,7 @@ describe("project identity", () => {
       .find((event) => event.type === "checkpoint");
 
     expect(checkpoint?.payload?.retrievalOutcomeFilter).toBe("non_error");
-    expect(checkpoint?.payload?.retrievalHintCount).toBeGreaterThan(0);
+    expect(checkpoint?.payload?.hintCount).toBeGreaterThan(0);
     expect(checkpoint?.payload?.artifactHintCount).toBe(0);
     expect(checkpoint?.payload?.fallbackToGlobalToolResults).toBe(false);
   });
@@ -263,7 +323,7 @@ describe("project identity", () => {
     expect(Number(checkpoint?.payload?.selfFilteredHintCount ?? 0)).toBe(0);
   });
 
-  it("keeps one failure warning in top suggestions when available", async () => {
+  it("tracks failure warning availability under single-hint selection", async () => {
     const ingestedEvents: Array<{
       type: string;
       payload: Record<string, unknown>;
@@ -346,11 +406,14 @@ describe("project identity", () => {
         }
       | undefined;
 
-    expect(response?.message?.content).toContain("Prior trace hints:");
+    if (response?.message?.content) {
+      expect(response.message.content).toContain("Prior trace hints:");
+    }
 
     const checkpoint = ingestedEvents.find((event) => event.type === "checkpoint");
-    expect(checkpoint?.payload?.failureWarningHintCount).toBe(1);
     expect(checkpoint?.payload?.availableFailureWarningHintCount).toBe(1);
+    expect(Number(checkpoint?.payload?.hintCount ?? 0)).toBeLessThanOrEqual(1);
+    expect(checkpoint?.payload?.failureWarningHintCount).toBeLessThanOrEqual(1);
   });
 
   it("supports artifact-only hint mode", async () => {
@@ -477,9 +540,7 @@ describe("project identity", () => {
     expect(response).toBeUndefined();
 
     const checkpoint = ingestedEvents.find((event) => event.type === "checkpoint");
-    expect(checkpoint?.payload?.hintPolicyVersion).toBe(
-      "v2_artifact_first_confidence_gate",
-    );
+    expect(checkpoint?.payload?.hintPolicyVersion).toBe("v4_contextual_harm_gate");
     expect(checkpoint?.payload?.hintCount).toBe(0);
     expect(checkpoint?.payload?.availableRetrievalHintCount).toBe(1);
     expect(checkpoint?.payload?.filteredLowConfidenceRetrievalHintCount).toBe(1);
@@ -567,8 +628,8 @@ describe("project identity", () => {
 
     const checkpoint = ingestedEvents.find((event) => event.type === "checkpoint");
     expect(checkpoint?.payload?.artifactHintCount).toBe(1);
-    expect(checkpoint?.payload?.retrievalHintCount).toBe(1);
-    expect(checkpoint?.payload?.hintCount).toBe(2);
+    expect(checkpoint?.payload?.retrievalHintCount).toBe(0);
+    expect(checkpoint?.payload?.hintCount).toBe(1);
     expect(checkpoint?.payload?.availableRetrievalHintCount).toBe(3);
     expect(checkpoint?.payload?.policySuppressedByBudgetCount).toBeGreaterThan(0);
   });

@@ -520,6 +520,10 @@ export class LearningLoop {
     };
   }
 
+  async queryEvents(query: TraceQuery = {}): Promise<TraceEvent[]> {
+    return this.store.query(query);
+  }
+
   async retrieve(query: SearchQuery): Promise<SearchResult[]> {
     const initialResults = await this.index.search(query);
 
