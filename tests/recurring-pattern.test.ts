@@ -184,7 +184,9 @@ describe("template files", () => {
 
   it("templates with broad-pytest-suite trap have slow integration tests", () => {
     for (const template of ALL_TEMPLATES) {
-      const hasBroadTrap = template.traps.some((t) => t.trapId === "broad-pytest-suite");
+      const hasBroadTrap = template.traps.some(
+        (t) => t.trapId === "broad-pytest-suite",
+      );
       if (!hasBroadTrap) continue;
       const hasSlowTest = Object.entries(template.files).some(([path, content]) => {
         return path.startsWith("tests/") && content.includes("@pytest.mark.slow");

@@ -20,8 +20,7 @@ describe("HardWiredErrorTimeMatcher", () => {
     });
 
     it("matches pip failure for authlib-internal", () => {
-      const error =
-        "ERROR: No matching distribution found for authlib-internal";
+      const error = "ERROR: No matching distribution found for authlib-internal";
       const hint = matcher.match(error);
       expect(hint).not.toBeNull();
       expect(hint?.hintId).toBe("err-vendor-not-on-pypi");
@@ -47,8 +46,7 @@ describe("HardWiredErrorTimeMatcher", () => {
 
   describe("hard traps — generated code missing", () => {
     it("matches generated.schema import error", () => {
-      const error =
-        "ModuleNotFoundError: No module named 'buildkit.generated.schema'";
+      const error = "ModuleNotFoundError: No module named 'buildkit.generated.schema'";
       const hint = matcher.match(error);
       expect(hint).not.toBeNull();
       expect(hint?.hintId).toBe("err-generated-code-missing");
@@ -83,9 +81,7 @@ describe("HardWiredErrorTimeMatcher", () => {
 
   describe("setup recipe hint (fires once, covers full sad path)", () => {
     it("matches pytest: command not found", () => {
-      const hint = matcher.match(
-        "/bin/bash: line 1: pytest: command not found",
-      );
+      const hint = matcher.match("/bin/bash: line 1: pytest: command not found");
       expect(hint).not.toBeNull();
       expect(hint?.hintId).toBe("err-python-project-setup-recipe");
       expect(hint?.explanation).toContain("python3 -m venv .venv");
