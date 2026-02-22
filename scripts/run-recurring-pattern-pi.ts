@@ -194,7 +194,6 @@ function parseArgs(argv: string[]): {
     if (token === "--hint-format" && value) {
       options.hintFormat = value;
       i += 1;
-      continue;
     }
   }
 

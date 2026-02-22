@@ -876,8 +876,7 @@ def deprecate_tool(tools: list[dict], name: str) -> list[dict]:
 
 The failing test is \`tests/test_registry.py::test_search_tools_by_description\`.`,
     expectedTrapIds: ["hallucinated-tool", "system-python-missing-module"],
-    verifyCommand:
-      "pytest tests/test_registry.py::test_search_tools_by_description -x",
+    verifyCommand: "pytest tests/test_registry.py::test_search_tools_by_description -x",
     goldPatch: {
       "src/toolhub/registry.py": `"""Tool registry — tracks available tools and their metadata."""
 from toolhub import config

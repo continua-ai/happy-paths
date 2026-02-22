@@ -3977,12 +3977,12 @@ def normalize_priorities(records: list[dict]) -> list[dict]:
 // ─── Import real-sad-path repos ─────────────────────────────────────────
 
 import {
-  MONOBUILD_TEMPLATE,
   MONOBUILD_TASKS,
-  TOOLHUB_TEMPLATE,
+  MONOBUILD_TEMPLATE,
   TOOLHUB_TASKS,
-  TRAP_FMT_BEFORE_LINT,
+  TOOLHUB_TEMPLATE,
   TRAP_BUILD_TARGET_SYNTAX,
+  TRAP_FMT_BEFORE_LINT,
   TRAP_HALLUCINATED_TOOL,
   TRAP_SYSTEM_PYTHON_MISSING_MODULE,
 } from "./realSadPathTemplates.js";
