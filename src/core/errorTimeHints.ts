@@ -387,6 +387,42 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     confidence: 0.95,
   },
 
+  // ═══ GIT WORKFLOW TRAPS ═══
+
+  {
+    hintId: "err-push-rejected-diverged",
+    family: "git_workflow",
+    pattern:
+      /rejected.*non-fast-forward|failed to push.*updates were rejected|fetch first|stale info/i,
+    explanation:
+      "The remote branch has diverged from your local branch. " +
+      "You need to fetch and rebase (or merge) before pushing.",
+    fixCommand:
+      "git fetch origin && git rebase origin/<branch> && git push --force-with-lease",
+    confidence: 0.95,
+  },
+  {
+    hintId: "err-rebase-dirty-tree",
+    family: "git_workflow",
+    pattern:
+      /cannot rebase.*uncommitted changes|cannot pull with rebase.*unstaged|please commit or stash/i,
+    explanation:
+      "Rebase requires a clean working tree. Stash your changes first, " +
+      "then rebase, then pop the stash.",
+    fixCommand: "git stash && git rebase origin/main && git stash pop",
+    confidence: 0.95,
+  },
+  {
+    hintId: "err-worktree-already-checked-out",
+    family: "git_workflow",
+    pattern: /is already checked out|already used by worktree/i,
+    explanation:
+      "That branch is checked out in another worktree. " +
+      "Check which worktrees exist and navigate to the right one.",
+    fixCommand: "git worktree list (then cd to the correct worktree)",
+    confidence: 0.95,
+  },
+
   // ═══ EASY TRAPS (disabled — models handle these fine) ═══
   // pytest-not-found, externally-managed-env, SECRET_KEY, broad-pytest,
   // generic-missing-module: removed. No value in hinting on errors the
