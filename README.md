@@ -5,8 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>One cool trick the costly LLM providers do not want you to know:</strong><br/>
-  stop paying repeatedly for the same wrong turns.
+  <strong>Stop paying repeatedly for the same wrong turns.</strong>
 </p>
 
 <p align="center">
@@ -28,7 +27,7 @@
   <a href="docs/skateboard-e2e.md">Skateboard E2E</a> ·
   <a href="docs/metrics.md">Metrics</a> ·
   <a href="docs/related-work.md">Related work</a> ·
-  <a href="docs/swebench-lite-lane.md">SWE-bench lane</a> ·
+  <a href="docs/recurring-pattern-benchmark.md">Benchmark</a> ·
   <a href="docs/roadmap.md">Roadmap</a>
 </p>
 
@@ -38,33 +37,73 @@
 
 ---
 
-Happy Paths is a trace-driven learning loop for agentic coding.
-
-Happy Paths captures agent traces, indexes them quickly, mines wrong-turn
-corrections, and turns those recoveries into reusable recovery skills that feed
-back into future runs.
+Happy Paths is a trace-driven learning loop for agentic coding. It captures
+agent traces, indexes them, mines wrong-turn corrections, and feeds those
+recoveries back into future runs so each session wastes less time and fewer
+tokens than the last.
 
 ## Why this exists
 
-Pi (and other extensible coding harnesses) let teams improve the workflow with
-skills, extensions, and tooling.
+Every coding agent session starts from zero. If the agent hits `pytest:
+command not found`, spends 4 steps figuring out it needs a venv, and eventually
+succeeds — the next session on the same project will repeat the exact same
+detour.
 
-That is powerful — but **figuring out when and how to extend the harness is
-itself expensive and noisy**.
+Happy Paths remembers what worked and intervenes at the moment of failure,
+before the agent wastes steps rediscovering the fix.
 
-Happy Paths automates that learning loop end-to-end: it detects repeated
-wrong turns, links them to corrections that worked, promotes those recoveries
-into reusable skills/playbooks, and feeds the result back into future runs so
-each run gets less wasteful over time.
+## Where it helps (and where it doesn't)
+
+We ran 10 benchmark iterations (~400 runs) to find the right intervention
+design. Honest findings:
+
+**Where it helps**: projects with undocumented setup steps, internal CLI tools,
+or error messages that point the wrong way. These are the cases where a model
+has no prior training data and can't infer the fix from repo files alone.
+
+**Where it doesn't help**: well-documented projects, standard toolchain errors,
+or situations where the model can figure out the fix by reading `README.md` and
+exploring the repo. Modern models (gpt-5.3-codex) are surprisingly good at
+`ls → find → read → execute` discovery loops.
+
+**What actively hurts**: injecting too many hints, injecting hints too early
+(before the agent has context), or injecting generic "prior failure" warnings.
+More is not better — one precise hint at the right moment beats three hints
+across three errors.
+
+See [Benchmark results](#benchmark-results) below for the full data.
+
+## How it works
+
+Happy Paths uses Pi's `tool_result` hook to intercept errors in real time.
+When a tool call returns an error matching a known pattern, Happy Paths appends
+a short recovery hint to the error output before the agent sees it.
+
+```
+Agent runs `pytest tests/` → error: "pytest: command not found"
+                                    ↓
+            Happy Paths matches error pattern
+                                    ↓
+            Appends: "This project needs setup. Create a venv,
+            install dev deps, check for setup scripts in the
+            repo root, then use .venv/bin/pytest."
+                                    ↓
+            Agent follows recipe → skips 3-4 wrong turns
+```
+
+The hints are error-keyed (matched by regex on error output), not
+command-keyed. This means the same hint fires regardless of which command
+produced the error. Hints are deduplicated per session — each hint fires at
+most once.
 
 ## The story arc
 
 The same failure pattern repeats at every scale. It starts with one engineer
 and one agent looping on avoidable dead-ends, then compounds when multiple
-agents run concurrently and replay each other’s mistakes. At team scale,
+agents run concurrently and replay each other's mistakes. At team scale,
 engineers rediscover similar fixes independently and the cost becomes org-wide.
-The natural endpoint is opt-in global sharing of learned happy paths (similar
-in spirit to skill exchange, but extracted and curated from real traces).
+The natural endpoint is opt-in global sharing of learned happy paths — similar
+in spirit to skill exchange, but extracted and curated from real traces.
 
 <table>
   <tbody>
@@ -83,100 +122,28 @@ in spirit to skill exchange, but extracted and curated from real traces).
 
 ## Core principles
 
-Happy Paths is correctness-first: we do not trade reliability for speed or
-cost. Retrieval is lexical/signature-first (exact and near-exact matching)
-before heavier semantic techniques. The default local mode has no mandatory
-external database or vector dependency, and adapters/backends remain pluggable
-so teams can swap harness and storage layers without rewriting core logic.
-
-## How Happy Paths works
-
-At runtime, the loop normalizes agent and tool events into `TraceEvent`, builds
-lexical retrieval artifacts immediately, mines wrong-turn-to-correction arcs,
-and then re-injects high-confidence recoveries as reusable guidance before or
-during future runs. Lexical and semantic retrieval can be combined via fusion,
-but the default path stays practical and deterministic.
-
-## What exists now (on `main`)
-
-The current implementation includes a normalized trace schema and core
-interfaces, a local JSONL trace store, an in-memory lexical index, an optional
-composite index (lexical + semantic fusion), wrong-turn mining, and pi adapter
-hooks. It also supports local bootstrap from persisted traces across sessions,
-ships an end-to-end wrong-turn evaluator (hit@1/hit@3/MRR), enforces a
-fixture-based quality gate in CI, and includes source-size guardrails.
+1. **Correctness first** — never make the agent less reliable.
+2. **Precise over prolific** — one good hint beats three noisy ones.
+3. **Error-time delivery** — intervene at the moment of failure, not before.
+4. **Lexical/signature retrieval first** — exact and near-exact matching before
+   heavier semantic techniques.
+5. **No mandatory external deps** — local mode has no database or vector
+   dependency.
+6. **Pluggable** — adapters/backends are swappable (harness, storage, index).
 
 ## Install
 
-Preferred (Bun-first local development):
-
 ```bash
-bun install
-bun run verify
+# Bun (preferred)
+bun install && bun run verify
+
+# npm
+npm install && npm run verify
 ```
 
-Node/npm remains fully supported:
+## Quick start
 
-```bash
-npm install
-npm run verify
-```
-
-## Quick usage
-
-```ts
-import { createLocalLearningLoop } from "@continua-ai/happy-paths";
-
-const loop = createLocalLearningLoop({ dataDir: ".happy-paths" });
-
-await loop.ingest({
-  id: crypto.randomUUID(),
-  timestamp: new Date().toISOString(),
-  sessionId: "session-1",
-  harness: "pi",
-  scope: "personal",
-  type: "tool_result",
-  payload: {
-    command: "npm test",
-    output: "Error: Cannot find module x",
-    isError: true,
-  },
-  metrics: { outcome: "failure" },
-});
-
-const hits = await loop.retrieve({ text: "cannot find module" });
-console.log(hits[0]);
-```
-
-### Rehydrate from persisted local traces
-
-```ts
-import { initializeLocalLearningLoop } from "@continua-ai/happy-paths";
-
-const initialized = await initializeLocalLearningLoop({
-  dataDir: ".happy-paths",
-});
-
-console.log(initialized.bootstrap.eventCount);
-```
-
-### pi adapter
-
-```ts
-import {
-  createLocalLearningLoop,
-  createPiTraceExtension,
-} from "@continua-ai/happy-paths";
-
-const loop = createLocalLearningLoop();
-export default createPiTraceExtension({ loop });
-```
-
-### pi package (plug-and-play)
-
-This package also ships a Pi extension under `extensions/happy-paths.ts`.
-
-Install it into Pi:
+### As a Pi extension (recommended)
 
 ```bash
 # from npm
@@ -186,87 +153,210 @@ pi install npm:@continua-ai/happy-paths
 pi install git:github.com/continua-ai/happy-paths
 ```
 
-Defaults / env vars:
+That's it. Happy Paths will capture traces and inject hints automatically.
 
-- Traces are stored at `~/.happy-paths/traces` by default.
-- Override trace root: `HAPPY_PATHS_TRACE_ROOT=...`
-- Set scope: `HAPPY_PATHS_TRACE_SCOPE=personal|team|public` (default: `personal`)
-- Tune hints: `HAPPY_PATHS_MAX_SUGGESTIONS=3`
-- Hint retrieval prefers non-error tool results before falling back to broader
-  tool-result history.
-- Learned wrong-turn artifacts are only injected when retrieval produces no
-  evidence-grounded hints.
-- Broad/low-signal commands are deprioritized in retrieval hints; they only
-  appear as explicit low-signal fallback hints when no better evidence exists.
-- If both low-signal history and prior failure evidence are present, failure
-  warnings are prioritized over low-signal action hints.
-- Override extension session id (for benchmark pairing):
-  `HAPPY_PATHS_SESSION_ID=swebench::<instance_id>::<off|on>::<replicate>`
+### Configuration (env vars)
 
-Ship traces to an HTTP ingest server:
+| Variable | Default | Description |
+|---|---|---|
+| `HAPPY_PATHS_TRACE_ROOT` | `~/.happy-paths/traces` | Where traces are stored |
+| `HAPPY_PATHS_TRACE_SCOPE` | `personal` | `personal`, `team`, or `public` |
+| `HAPPY_PATHS_MAX_SUGGESTIONS` | `3` | Max hints per session start |
+| `HAPPY_PATHS_ERROR_TIME_HINTS` | `on` | Enable/disable error-time hints |
+| `HAPPY_PATHS_BEFORE_AGENT_START` | `true` | Enable/disable pre-session hints |
+| `HAPPY_PATHS_HINT_MODE` | `suggest` | `suggest`, `inject`, or `none` |
+| `HAPPY_PATHS_SESSION_ID` | (auto) | Override session ID (for benchmarks) |
+
+### Programmatic usage
+
+```ts
+import { createLocalLearningLoop } from "@continua-ai/happy-paths";
+
+// Create a learning loop backed by local JSONL files
+const loop = createLocalLearningLoop({ dataDir: ".happy-paths" });
+
+// Ingest a trace event (normally done automatically by the Pi adapter)
+await loop.ingest({
+  id: crypto.randomUUID(),
+  timestamp: new Date().toISOString(),
+  sessionId: "session-1",
+  harness: "pi",
+  scope: "personal",
+  type: "tool_result",
+  payload: {
+    command: "npm test",
+    output: "Error: Cannot find module 'foo'",
+    isError: true,
+  },
+});
+
+// Retrieve relevant past events
+const hits = await loop.retrieve({ text: "cannot find module" });
+```
+
+### Rehydrate from persisted traces
+
+```ts
+import { initializeLocalLearningLoop } from "@continua-ai/happy-paths";
+
+// Bootstraps in-memory index from on-disk JSONL traces
+const { loop, bootstrap } = await initializeLocalLearningLoop({
+  dataDir: ".happy-paths",
+});
+
+console.log(`Loaded ${bootstrap.eventCount} events from prior sessions`);
+```
+
+### Ship traces to a hosted endpoint
 
 ```bash
-export HAPPY_PATHS_INGEST_URL=https://...               # e.g. https://...a.run.app
-export HAPPY_PATHS_TEAM_ID=team_...                     # used for local shipper state scoping
+export HAPPY_PATHS_INGEST_URL=https://your-ingest-server.example.com
+export HAPPY_PATHS_TEAM_ID=team_abc
 export HAPPY_PATHS_TEAM_TOKEN_FILE=~/.happy-paths/team-token.txt
 export HAPPY_PATHS_TRACE_ROOTS=~/.happy-paths/traces
 
 npx @continua-ai/happy-paths ingest ship
-# or
-npx github:continua-ai/happy-paths ingest ship
 ```
 
 ## Project identity overrides
 
 Brand-specific identifiers are centralized in `src/core/projectIdentity.ts` and
-can be overridden per integration.
+can be overridden per integration:
 
 ```ts
-import { createLocalLearningLoop } from "@continua-ai/happy-paths";
-
 const loop = createLocalLearningLoop({
   projectIdentity: {
-    displayName: "YourNewName",
-    defaultDataDirName: ".yournewname",
-    extensionCustomType: "yournewname",
+    displayName: "YourBrand",
+    defaultDataDirName: ".yourbrand",
+    extensionCustomType: "yourbrand",
   },
 });
 ```
 
-## Metrics and CI quality gate
-
-Dataset fixture: `testdata/wrong_turn_dataset.json`
+## Development
 
 ```bash
-npm run test:wrong-turn-gate
-npm run eval:wrong-turn
-npm run eval:feasibility
-npm run eval:skateboard
-npm run eval:observed-ab -- --trace-root ~/.pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469-- --format pi --tool-name bash
-npm run eval:observed-ab:long-horizon -- --trace-root ~/.pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469-- --format pi --tool-name bash --strict-no-family-overlap
-npm run eval:trajectory-outcome:long-horizon -- --trace-root ~/.pi/agent/sessions/--Users-dpetrou-src-.worktrees-workspace-CON-1469-- --format pi --tool-name bash --strict-no-family-overlap
-npm run memo:feasibility
-npm run sync:evidence-web
+npm run verify          # lint + typecheck + test
+npm run test            # unit tests only
+npm run build           # compile TypeScript
+
+# Quality gates
+npm run test:wrong-turn-gate       # wrong-turn retrieval quality gate
+npm run eval:wrong-turn            # wrong-turn evaluator (hit@k, MRR)
+npm run eval:feasibility           # feasibility gate evaluation
+npm run eval:skateboard            # skateboard E2E evaluation
 ```
 
-CI enforces this gate so suggestion quality remains visible while iterating on
-speed/cost optimizations.
+See [docs/metrics.md](docs/metrics.md) for evaluation methodology and
+[docs/feasibility-gate.md](docs/feasibility-gate.md) for the go/no-go
+validation flow.
 
-For stage-0 go/no-go validation, use the feasibility gate flow in
-`docs/feasibility-gate.md`.
+## Benchmark results
 
-The generated decision memo format lives at `docs/feasibility-decision.md`.
+We built a [recurring-pattern benchmark](docs/recurring-pattern-benchmark.md)
+to measure whether error-time hints actually save time and tokens. The
+benchmark uses synthetic Python repos with intentional traps — undocumented CLI
+tools, misdirecting error messages, non-standard project setup — that simulate
+the kinds of knowledge gaps models can't resolve from training data alone.
 
-Beyond LLM token/cost savings, Happy Paths also tracks expensive execution
-surfaces (long-running tools, test suites, CI workflows) so optimization can
-target total engineering throughput, not model spend alone.
+### Setup
+
+- **Model**: gpt-5.3-codex (via Pi + OpenAI Codex provider)
+- **Design**: A/B — each task runs OFF (no hints) and ON (hints enabled),
+  interleaved, with 3 replicates per variant
+- **Metric**: wall-clock time, error count, and tool-call count per run
+- **Repos**: 8 synthetic Python projects, 32 tasks, 15 unique traps
+- **Trap families**: undocumented tooling, misdirecting error messages,
+  non-standard test setup, environment quirks
+
+### How we got here (10 iterations)
+
+Finding the right hint strategy took systematic iteration. Early attempts were
+net-harmful — they added overhead without reducing errors. Each iteration
+isolated one variable:
+
+| Version | Strategy | ledgerkit Δ | logparse Δ | Key lesson |
+|---|---|---|---|---|
+| v3 | Easy-trap hints (venv, deps) | +89% slower | — | Models handle standard errors fine — don't hint what they already know |
+| v7 | Undocumented-tool hints + pre-session injection | +31% slower | +42% slower | Hints fire but pre-session overhead dominates |
+| v8 | 3 separate per-error hints + pre-session | +15% slower | +27% slower | Fewer hints = less overhead, but still net-negative |
+| v9 | 1 comprehensive recipe + pre-session | +1% slower | +10% slower | Single hint dramatically better than multiple |
+| **v10** | **1 recipe, error-time only (no pre-session)** | **−5% faster** | **+7% slower** | **Removing pre-session noise flips ledgerkit net-positive** |
+
+### v10 results (current)
+
+Error-time-only mode with a single setup recipe hint:
+
+**ledgerkit** (undocumented `./kit` CLI tool, no README):
+
+| Variant | Avg time | Avg errors/run | Avg calls/run |
+|---|---|---|---|
+| OFF (no hints) | 63s | 3.2 | 16.8 |
+| ON (error-time recipe) | 60s | 2.9 | 16.9 |
+| **Δ** | **−5%** | **−0.2 errors** | **+0.2 calls** |
+
+**logparse** (undocumented `./qa` CLI tool, no README):
+
+| Variant | Avg time | Avg errors/run | Avg calls/run |
+|---|---|---|---|
+| OFF (no hints) | 48s | 3.2 | 13.8 |
+| ON (error-time recipe) | 52s | 3.3 | 14.8 |
+| **Δ** | **+7%** | **+0.2 errors** | **+1.1 calls** |
+
+Ledgerkit shows a clear net-positive: faster AND fewer errors with hints.
+Logparse is within noise (+7% is ~4 seconds on a 48s baseline, n=12).
+
+### What the data teaches
+
+1. **One comprehensive hint > many small hints.** When the agent hits
+   `pytest: command not found`, give it the full recipe (venv + deps + check
+   for setup scripts + run tests). Don't drip-feed 3 hints across 3 errors.
+
+2. **Error-time delivery > pre-session injection.** Injecting hints before the
+   agent starts (via `before_agent_start`) adds overhead even when the hints
+   are relevant. The agent hasn't seen the project yet, so generic warnings
+   just add noise. Error-time delivery waits until the agent has context.
+
+3. **Don't hint what the model already knows.** gpt-5.3-codex handles
+   `pip install`, venv creation, and standard toolchain errors in 1-2 steps.
+   Hinting on those is net-harmful — it adds processing overhead without
+   saving any steps.
+
+4. **The value gap is narrow but real.** Happy Paths helps most when:
+   - Error messages point the wrong way (e.g., "See https://internal.docs/"
+     for a URL that doesn't exist)
+   - The fix requires running a tool that isn't mentioned in any repo file
+   - The project uses internal/proprietary tooling that the model has no
+     training data for
+
+5. **Modern models are excellent explorers.** Even with zero documentation,
+   gpt-5.3-codex discovers undocumented CLI tools via
+   `ls → find → read script → execute`. Hints provide a more direct path, but
+   the model usually gets there on its own in 3-4 extra steps.
+
+### Methodology notes
+
+- All benchmark repos are synthetic (no real user data). Source:
+  `scripts/build-recurring-pattern-benchmark.ts`
+- Runs use `git clean -fdx` between tasks to ensure clean state
+- Traces are captured per-run and analyzed post-hoc for error counts, hint
+  firing, and tool-call sequences
+- Full methodology: [docs/recurring-pattern-benchmark.md](docs/recurring-pattern-benchmark.md)
+
+### Prior work: SWE-bench Lite
+
+We also ran ~15 matrix iterations on a
+[SWE-bench Lite lane](docs/swebench-lite-lane.md) (real open-source bug fixes).
+Hints were consistently net-harmful there because the tasks don't share failure
+modes — each bug is unique, so there's nothing useful to learn across sessions.
+This confirmed that Happy Paths is specifically valuable for *recurring*
+patterns, not one-off bug fixes.
 
 ## Hosted vision
 
-The hosted direction is opt-in sharing that can grow from personal scope to
-team scope and then to broader/global scope, with privacy controls and artifact
-review at each stage so learned agent improvements can be safely published and
-reused at internet scale.
+The hosted direction is opt-in sharing that grows from personal → team → global
+scope, with privacy controls and artifact review at each stage. Learned
+recoveries can be safely published and reused at internet scale.
 
 ## Credits
 
