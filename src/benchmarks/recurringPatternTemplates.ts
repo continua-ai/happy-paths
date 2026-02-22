@@ -4031,6 +4031,14 @@ export {
   OPSBOARD_AGENTS_MD,
 } from "./reinventionTemplates.js";
 
+import {
+  ALL_GIT_WORKFLOW_TASKS,
+  ALL_GIT_WORKFLOW_TEMPLATES,
+  ALL_GIT_WORKFLOW_TRAPS,
+} from "./gitWorkflowTemplates.js";
+
+export { ALL_GIT_WORKFLOW_TASKS, ALL_GIT_WORKFLOW_TEMPLATES, ALL_GIT_WORKFLOW_TRAPS };
+
 /** Combined: all templates (error recovery + reinvention). */
 export const ALL_TEMPLATES_WITH_REINVENTION: RepoTemplate[] = [
   ...ALL_TEMPLATES,
@@ -4041,6 +4049,20 @@ export const ALL_TEMPLATES_WITH_REINVENTION: RepoTemplate[] = [
 export const ALL_TASKS_WITH_REINVENTION: RecurringPatternTask[] = [
   ...ALL_TASKS,
   ...ALL_REINVENTION_TASKS,
+];
+
+/** Combined: all templates (error recovery + reinvention + git workflow). */
+export const ALL_TEMPLATES_FULL: RepoTemplate[] = [
+  ...ALL_TEMPLATES,
+  ...ALL_REINVENTION_TEMPLATES,
+  ...ALL_GIT_WORKFLOW_TEMPLATES,
+];
+
+/** Combined: all tasks (error recovery + reinvention + git workflow). */
+export const ALL_TASKS_FULL: RecurringPatternTask[] = [
+  ...ALL_TASKS,
+  ...ALL_REINVENTION_TASKS,
+  ...ALL_GIT_WORKFLOW_TASKS,
 ];
 
 /** All unique traps. */
@@ -4065,4 +4087,5 @@ export const ALL_TRAPS: RecurringTrap[] = [
   TRAP_HALLUCINATED_TOOL,
   TRAP_SYSTEM_PYTHON_MISSING_MODULE,
   ...ALL_REINVENTION_TRAPS,
+  ...ALL_GIT_WORKFLOW_TRAPS,
 ];

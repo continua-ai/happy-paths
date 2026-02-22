@@ -23,8 +23,10 @@ import {
 } from "../src/benchmarks/recurringPattern.js";
 import {
   ALL_TASKS,
+  ALL_TASKS_FULL,
   ALL_TASKS_WITH_REINVENTION,
   ALL_TEMPLATES,
+  ALL_TEMPLATES_FULL,
   ALL_TEMPLATES_WITH_REINVENTION,
   ALL_TRAPS,
   DATAQUERY_AGENTS_MD,
@@ -32,13 +34,17 @@ import {
   OPSBOARD_AGENTS_MD,
 } from "../src/benchmarks/recurringPatternTemplates.js";
 
+import { setupGitWorkflowRepo } from "../src/benchmarks/gitWorkflowSetup.js";
+
 function parseArgs(argv: string[]): {
   out: string;
   includeReinvention: boolean;
+  includeGitWorkflow: boolean;
   withAgentsMd: boolean;
 } {
   let out = ".happy-paths/benchmarks/recurring-pattern";
   let includeReinvention = false;
+  let includeGitWorkflow = false;
   let withAgentsMd = false;
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -49,12 +55,19 @@ function parseArgs(argv: string[]): {
     if (argv[i] === "--include-reinvention") {
       includeReinvention = true;
     }
+    if (argv[i] === "--include-git-workflow") {
+      includeGitWorkflow = true;
+    }
+    if (argv[i] === "--include-all") {
+      includeReinvention = true;
+      includeGitWorkflow = true;
+    }
     if (argv[i] === "--with-agents-md") {
       withAgentsMd = true;
     }
   }
 
-  return { out, includeReinvention, withAgentsMd };
+  return { out, includeReinvention, includeGitWorkflow, withAgentsMd };
 }
 
 function createRepoDirectory(
@@ -106,13 +119,22 @@ function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const outDir = resolve(args.out);
 
-  const templates = args.includeReinvention
-    ? ALL_TEMPLATES_WITH_REINVENTION
-    : ALL_TEMPLATES;
-  const tasks = args.includeReinvention ? ALL_TASKS_WITH_REINVENTION : ALL_TASKS;
+  const templates = args.includeGitWorkflow
+    ? ALL_TEMPLATES_FULL
+    : args.includeReinvention
+      ? ALL_TEMPLATES_WITH_REINVENTION
+      : ALL_TEMPLATES;
+  const tasks = args.includeGitWorkflow
+    ? ALL_TASKS_FULL
+    : args.includeReinvention
+      ? ALL_TASKS_WITH_REINVENTION
+      : ALL_TASKS;
 
   console.log("═══ Recurring-pattern benchmark builder ═══");
   console.log(`Output: ${outDir}`);
+  if (args.includeGitWorkflow) {
+    console.log("Including git-workflow benchmark repos.");
+  }
   if (args.includeReinvention) {
     console.log("Including reinvention benchmark repos.");
   }
@@ -149,6 +171,12 @@ function main(): void {
       template.executablePaths,
     );
     repoPaths[template.templateId] = repoDir;
+
+    // Git-workflow repos need extra setup (bare remote, branch divergence).
+    if (template.templateId === "gitflow") {
+      setupGitWorkflowRepo(repoDir);
+      console.log("     + git-workflow setup (bare remote, branch divergence)");
+    }
 
     // Capture the base commit SHA.
     const sha = execSync("git rev-parse HEAD", {

@@ -15,7 +15,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
@@ -280,9 +280,65 @@ function resetRepo(repoDir: string): void {
   if (existsSync(lockPath)) {
     rmSync(lockPath, { force: true });
   }
+  // Abort any in-progress rebase/merge.
+  spawnSync("git", ["rebase", "--abort"], { cwd: repoDir, stdio: "pipe" });
+  spawnSync("git", ["merge", "--abort"], { cwd: repoDir, stdio: "pipe" });
   spawnSync("git", ["checkout", "--force", "."], { cwd: repoDir, stdio: "pipe" });
   // -fdx: also remove ignored files (.venv, .fixtures, .testdata, __pycache__, etc.)
   spawnSync("git", ["clean", "-fdx"], { cwd: repoDir, stdio: "pipe" });
+  // Go back to main (git-workflow tasks checkout their own branch after reset).
+  spawnSync("git", ["checkout", "main"], { cwd: repoDir, stdio: "pipe" });
+}
+
+/**
+ * Prepare the git state for a gitflow task.
+ * Checks out the right branch and optionally creates dirty state.
+ */
+function prepareGitWorkflowTaskState(repoDir: string, taskId: string): void {
+  const branchMap: Record<string, string> = {
+    "gitflow-push-after-diverge": "fix-greeting",
+    "gitflow-push-conflict-multiply": "feature-multiply",
+    "gitflow-rebase-dirty-subtract": "feature-subtract",
+    "gitflow-rebase-dirty-upper": "fix-upper",
+  };
+
+  const branch = branchMap[taskId];
+  if (!branch) return;
+
+  // Checkout the task branch.
+  spawnSync("git", ["checkout", branch], { cwd: repoDir, stdio: "pipe" });
+
+  // For dirty-rebase tasks, create uncommitted changes.
+  if (taskId === "gitflow-rebase-dirty-upper") {
+    writeFileSync(
+      join(repoDir, "scratch.txt"),
+      "Some work in progress that hasn't been committed yet.\n",
+    );
+    writeFileSync(
+      join(repoDir, "README.md"),
+      `# gitflow
+
+A small Python utility library with CI and git workflow conventions.
+
+## Development
+
+\`\`\`bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+\`\`\`
+
+## Git workflow
+
+- Branch from \`main\`, push to \`origin/<branch>\`.
+- Rebase onto \`main\` before merging.
+
+## WIP notes (uncommitted)
+- Thinking about adding strip() to upper()
+`,
+    );
+  }
 }
 
 async function prepareTraceDataDir(options: {
@@ -536,6 +592,11 @@ async function main(): Promise<void> {
 
         // Reset repo to clean state.
         resetRepo(repoDir);
+
+        // Git-workflow tasks: checkout the right branch.
+        if (task.taskId.startsWith("gitflow-")) {
+          prepareGitWorkflowTaskState(repoDir, task.taskId);
+        }
 
         const traceDataDir = await prepareTraceDataDir({
           traceRoot,
