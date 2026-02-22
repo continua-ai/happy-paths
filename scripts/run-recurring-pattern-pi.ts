@@ -111,6 +111,7 @@ function parseArgs(argv: string[]): {
     traceStateMode: "shared" as TraceStateMode,
     taskFilter: null as string | null,
     cleanTraceRoot: true,
+    noBeforeAgentStart: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -185,6 +186,9 @@ function parseArgs(argv: string[]): {
     }
     if (token === "--no-clean-trace-root") {
       options.cleanTraceRoot = false;
+    }
+    if (token === "--no-before-agent-start") {
+      options.noBeforeAgentStart = true;
     }
   }
 
@@ -315,6 +319,7 @@ async function runVariant(options: {
   model: string | null;
   thinking: string | null;
   timeoutSeconds: number;
+  noBeforeAgentStart: boolean;
 }): Promise<RunRecord> {
   const slug = `${sanitizePathComponent(options.task.taskId)}-${options.variant}-r${options.replicate}`;
   const sessionId = `rp::${options.task.taskId}::${options.variant}::r${options.replicate}`;
@@ -347,6 +352,11 @@ async function runVariant(options: {
     env.HAPPY_PATHS_ERROR_TIME_HINTS = "off";
   } else if (options.onHintMode !== null) {
     env.HAPPY_PATHS_HINT_MODE = options.onHintMode;
+  }
+
+  // Support disabling before_agent_start in ON variant (error-time-only mode).
+  if (options.noBeforeAgentStart && options.variant === "on") {
+    env.HAPPY_PATHS_BEFORE_AGENT_START = "false";
   }
 
   // Build pi args.
@@ -542,6 +552,7 @@ async function main(): Promise<void> {
           model: args.model,
           thinking: args.thinking,
           timeoutSeconds: args.timeoutSeconds,
+          noBeforeAgentStart: args.noBeforeAgentStart,
         });
 
         runs.push(record);

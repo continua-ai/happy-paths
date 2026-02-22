@@ -1455,6 +1455,23 @@ export function createPiTraceExtension(
     pi.on("before_agent_start", async (rawEvent) => {
       const event = rawEvent as PiBeforeAgentStartEvent;
 
+      // Allow disabling before_agent_start entirely (error-time-only mode).
+      const beforeAgentStartDisabled =
+        process.env.HAPPY_PATHS_BEFORE_AGENT_START === "false" ||
+        process.env.HAPPY_PATHS_BEFORE_AGENT_START === "0";
+      if (beforeAgentStartDisabled) {
+        await ingest({
+          type: "checkpoint",
+          payload: {
+            kind: "happy_paths_prior_hints",
+            hintMode,
+            hintCount: 0,
+            beforeAgentStartDisabled: true,
+          },
+        });
+        return undefined;
+      }
+
       if (maxSuggestions <= 0) {
         await ingest({
           type: "checkpoint",
