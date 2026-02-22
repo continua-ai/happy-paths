@@ -4015,6 +4015,28 @@ export const ALL_TASKS: RecurringPatternTask[] = [
   ...TOOLHUB_TASKS,
 ];
 
+// ─── Reinvention benchmark (imported from reinventionTemplates) ─────────
+
+import {
+  ALL_REINVENTION_TASKS,
+  ALL_REINVENTION_TEMPLATES,
+  ALL_REINVENTION_TRAPS,
+} from "./reinventionTemplates.js";
+
+export { ALL_REINVENTION_TASKS, ALL_REINVENTION_TEMPLATES, ALL_REINVENTION_TRAPS };
+
+/** Combined: all templates (error recovery + reinvention). */
+export const ALL_TEMPLATES_WITH_REINVENTION: RepoTemplate[] = [
+  ...ALL_TEMPLATES,
+  ...ALL_REINVENTION_TEMPLATES,
+];
+
+/** Combined: all tasks (error recovery + reinvention). */
+export const ALL_TASKS_WITH_REINVENTION: RecurringPatternTask[] = [
+  ...ALL_TASKS,
+  ...ALL_REINVENTION_TASKS,
+];
+
 /** All unique traps. */
 export const ALL_TRAPS: RecurringTrap[] = [
   TRAP_MISSING_PYTEST_COV,
@@ -4036,4 +4058,5 @@ export const ALL_TRAPS: RecurringTrap[] = [
   TRAP_BUILD_TARGET_SYNTAX,
   TRAP_HALLUCINATED_TOOL,
   TRAP_SYSTEM_PYTHON_MISSING_MODULE,
+  ...ALL_REINVENTION_TRAPS,
 ];

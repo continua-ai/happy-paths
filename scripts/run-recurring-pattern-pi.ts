@@ -489,9 +489,9 @@ async function main(): Promise<void> {
   // Filter tasks.
   let tasks = pack.tasks;
   if (args.taskFilter) {
-    const pattern = args.taskFilter;
+    const pattern = new RegExp(args.taskFilter);
     tasks = tasks.filter(
-      (t) => t.taskId.includes(pattern) || t.repoTemplateId.includes(pattern),
+      (t) => pattern.test(t.taskId) || pattern.test(t.repoTemplateId),
     );
   }
 

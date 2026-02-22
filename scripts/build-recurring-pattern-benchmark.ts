@@ -23,21 +23,30 @@ import {
 } from "../src/benchmarks/recurringPattern.js";
 import {
   ALL_TASKS,
+  ALL_TASKS_WITH_REINVENTION,
   ALL_TEMPLATES,
+  ALL_TEMPLATES_WITH_REINVENTION,
   ALL_TRAPS,
 } from "../src/benchmarks/recurringPatternTemplates.js";
 
-function parseArgs(argv: string[]): { out: string } {
+function parseArgs(argv: string[]): {
+  out: string;
+  includeReinvention: boolean;
+} {
   let out = ".happy-paths/benchmarks/recurring-pattern";
+  let includeReinvention = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--out" && argv[i + 1]) {
-      out = argv[i + 1];
+      out = argv[i + 1] ?? out;
       i += 1;
+    }
+    if (argv[i] === "--include-reinvention") {
+      includeReinvention = true;
     }
   }
 
-  return { out };
+  return { out, includeReinvention };
 }
 
 function createRepoDirectory(
@@ -89,18 +98,26 @@ function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const outDir = resolve(args.out);
 
+  const templates = args.includeReinvention
+    ? ALL_TEMPLATES_WITH_REINVENTION
+    : ALL_TEMPLATES;
+  const tasks = args.includeReinvention ? ALL_TASKS_WITH_REINVENTION : ALL_TASKS;
+
   console.log("═══ Recurring-pattern benchmark builder ═══");
   console.log(`Output: ${outDir}`);
+  if (args.includeReinvention) {
+    console.log("Including reinvention benchmark repos.");
+  }
   console.log();
 
   // Create output directory.
   mkdirSync(outDir, { recursive: true });
 
   // Create repo directories.
-  console.log(`Creating ${ALL_TEMPLATES.length} repo templates...`);
+  console.log(`Creating ${templates.length} repo templates...`);
   const repoPaths: Record<string, string> = {};
 
-  for (const template of ALL_TEMPLATES) {
+  for (const template of templates) {
     console.log(`  📁 ${template.templateId}: ${template.description.slice(0, 80)}...`);
     const repoDir = createRepoDirectory(
       outDir,
@@ -131,8 +148,8 @@ function main(): void {
     generatedAtUtc: new Date().toISOString(),
     description:
       "Recurring-pattern benchmark for Happy Paths. Tasks share failure modes across repos.",
-    templates: ALL_TEMPLATES,
-    tasks: ALL_TASKS,
+    templates,
+    tasks,
     trapIndex,
   };
 
@@ -143,14 +160,14 @@ function main(): void {
   // Print summary.
   console.log();
   console.log("═══ Summary ═══");
-  console.log(`Templates: ${ALL_TEMPLATES.length}`);
-  console.log(`Tasks: ${ALL_TASKS.length}`);
+  console.log(`Templates: ${templates.length}`);
+  console.log(`Tasks: ${tasks.length}`);
   console.log(`Unique traps: ${ALL_TRAPS.length}`);
   console.log();
 
   // Trap recurrence matrix.
-  const recurrence = trapRecurrenceCounts(ALL_TASKS);
-  const trapTasks = tasksByTrap(ALL_TASKS);
+  const recurrence = trapRecurrenceCounts(tasks);
+  const trapTasks = tasksByTrap(tasks);
 
   console.log("Trap recurrence (how many tasks share each trap):");
   for (const [trapId, count] of [...recurrence.entries()].sort((a, b) => b[1] - a[1])) {
