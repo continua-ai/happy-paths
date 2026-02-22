@@ -265,11 +265,14 @@ the kinds of knowledge gaps models can't resolve from training data alone.
 - **Design**: A/B — each task runs OFF (no hints) and ON (hints enabled),
   interleaved, with 3 replicates per variant
 - **Metric**: wall-clock time, error count, and tool-call count per run
-- **Repos**: 8 synthetic Python projects, 32 tasks, 15 unique traps
+- **Repos**: 10 synthetic Python projects, 40 tasks, 19 unique traps
 - **Trap families**: undocumented tooling, misdirecting error messages,
-  non-standard test setup, environment quirks
+  non-standard test setup, format-before-lint, build target syntax,
+  hallucinated tool names
+- **Real sad paths**: 2 repos mined from 300 real Pi sessions (~2,275
+  categorized errors across 95K tool calls)
 
-### How we got here (10 iterations)
+### How we got here (13 iterations)
 
 Finding the right hint strategy took systematic iteration. Early attempts were
 net-harmful — they added overhead without reducing errors. Each iteration
@@ -283,6 +286,10 @@ isolated one variable:
 | v9 | 1 comprehensive recipe + pre-session | +1% slower | +10% slower | Single hint dramatically better than multiple |
 | v10 | 1 recipe, error-time only (no pre-session) | −5% faster | +7% slower | Removing pre-session noise flips ledgerkit net-positive |
 | **v11** | **Prescriptive recipe, error-time only** | **−11% faster** | **−4% faster** | **Explicit `.venv/bin/pytest` prevents model shortcuts** |
+| v12 | Terse format (just the fix command) | +14% slower | −15% faster | Terse best for simple fixes, verbose for discovery |
+| v13 | Adaptive format (terse/verbose per hint) | −2% faster | +89%* slower | Middle-of-road; v11 remains best general policy |
+
+\* v13 logparse average skewed by single 596s outlier; median: −7%.
 
 ### v11 results (current)
 
@@ -318,6 +325,26 @@ shortcuts that cause additional errors.
 Both ledgerkit and logparse are net-positive. Webutil is neutral on time but
 reduces errors and tool calls.
 
+### Real sad path analysis (session mining)
+
+We mined 300 real Pi sessions (~95K tool calls) and identified 14 recurring
+sad path families. The top errors agents hit repeatedly:
+
+| Category | Real freq | In benchmark? |
+|---|---|---|
+| Format before lint | 533x | ✅ monobuild (new) |
+| Build target syntax | 368x | ✅ monobuild (new) |
+| dx preflight timeout | 329x | _(CI-specific)_ |
+| Git push conflicts | 244x | _(git-specific)_ |
+| Git dirty rebase | 135x | _(git-specific)_ |
+| Git worktree confusion | 132x | _(git-specific)_ |
+| Hallucinated tool names | 92x | ✅ toolhub (new) |
+| Missing Python modules | 88x | ✅ toolhub (new) |
+
+The 4 git-specific patterns (push conflicts, dirty rebase, worktree confusion)
+and the CI timeout pattern require git/CI infrastructure in the benchmark — a
+future improvement.
+
 ### What the data teaches
 
 1. **One comprehensive hint > many small hints.** When the agent hits
@@ -339,14 +366,18 @@ reduces errors and tool calls.
    `.venv/bin/pytest` won't exist without the venv. Name the specific tools
    (`./kit`, `./qa`) instead of saying "check for executable files."
 
-5. **The value gap is narrow but real.** Happy Paths helps most when:
+5. **Hints work when errors misdirect; they hurt when README already explains.**
+   Toolhub has a clear README and `./th setup` — hints add noise. Ledgerkit and
+   logparse have NO README and opaque error messages — hints save 4-7 steps.
+
+6. **The value gap is narrow but real.** Happy Paths helps most when:
    - Error messages point the wrong way (e.g., "See https://internal.docs/"
      for a URL that doesn't exist)
    - The fix requires running a tool that isn't mentioned in any repo file
    - The project uses internal/proprietary tooling that the model has no
      training data for
 
-6. **Modern models are excellent explorers.** Even with zero documentation,
+7. **Modern models are excellent explorers.** Even with zero documentation,
    gpt-5.3-codex discovers undocumented CLI tools via
    `ls → find → read script → execute`. Hints provide a more direct path, but
    the model usually gets there on its own in 3-4 extra steps.

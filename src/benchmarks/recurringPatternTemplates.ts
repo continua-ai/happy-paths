@@ -3974,6 +3974,19 @@ def normalize_priorities(records: list[dict]) -> list[dict]:
   },
 ];
 
+// ─── Import real-sad-path repos ─────────────────────────────────────────
+
+import {
+  MONOBUILD_TASKS,
+  MONOBUILD_TEMPLATE,
+  TOOLHUB_TASKS,
+  TOOLHUB_TEMPLATE,
+  TRAP_BUILD_TARGET_SYNTAX,
+  TRAP_FMT_BEFORE_LINT,
+  TRAP_HALLUCINATED_TOOL,
+  TRAP_SYSTEM_PYTHON_MISSING_MODULE,
+} from "./realSadPathTemplates.js";
+
 /** All templates. */
 export const ALL_TEMPLATES: RepoTemplate[] = [
   PYMATH_TEMPLATE,
@@ -3984,6 +3997,8 @@ export const ALL_TEMPLATES: RepoTemplate[] = [
   WEBUTIL_TEMPLATE,
   LEDGERKIT_TEMPLATE,
   LOGPARSE_TEMPLATE,
+  MONOBUILD_TEMPLATE,
+  TOOLHUB_TEMPLATE,
 ];
 
 /** All tasks. */
@@ -3996,6 +4011,8 @@ export const ALL_TASKS: RecurringPatternTask[] = [
   ...WEBUTIL_TASKS,
   ...LEDGERKIT_TASKS,
   ...LOGPARSE_TASKS,
+  ...MONOBUILD_TASKS,
+  ...TOOLHUB_TASKS,
 ];
 
 /** All unique traps. */
@@ -4015,4 +4032,8 @@ export const ALL_TRAPS: RecurringTrap[] = [
   TRAP_SESSION_FIXTURE_TIMEOUT,
   TRAP_UNDOCUMENTED_FIXTURES_TOOL,
   TRAP_UNDOCUMENTED_TESTDATA_TOOL,
+  TRAP_FMT_BEFORE_LINT,
+  TRAP_BUILD_TARGET_SYNTAX,
+  TRAP_HALLUCINATED_TOOL,
+  TRAP_SYSTEM_PYTHON_MISSING_MODULE,
 ];
