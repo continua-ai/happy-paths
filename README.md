@@ -270,12 +270,13 @@ the kinds of knowledge gaps models can't resolve from training data alone.
 - **Design**: A/B — each task runs OFF (no hints) and ON (hints enabled),
   interleaved, with 3 replicates per variant
 - **Metric**: wall-clock time, error count, and tool-call count per run
-- **Repos**: 13 synthetic Python projects, 52 tasks, 24 unique traps
+- **Repos**: 14 synthetic Python projects, 56 tasks, 27 unique traps
 - **Trap families**: undocumented tooling, misdirecting error messages,
   non-standard test setup, format-before-lint, build target syntax,
-  hallucinated tool names
+  hallucinated tool names, reinvention waste, git workflow
 - **Real sad paths**: 2 repos mined from 300 real Pi sessions (~2,275
   categorized errors across 95K tool calls)
+- **Total runs**: ~1,000+ across 17+ iterations
 
 ### How we got here (13 iterations)
 
@@ -371,6 +372,32 @@ existing CLI tools (`./track`, `./ops`, `jq`) buried in docs:
 markdown table in `AGENTS.md` mapping operations → CLI commands completely
 eliminated throwaway scripts and nearly tripled CLI usage. Cost: ~200 tokens
 in the system prompt. Savings: ~1,000+ tokens per session.
+
+### Higher-confidence results (r=5)
+
+We re-ran webutil and toolhub with 5 replicates (80 sessions) to reduce noise:
+
+| Repo | OFF median | ON median | Δ median | ON faster? |
+|---|---|---|---|---|
+| webutil | 84s | 100s | +18% | 1/4 tasks |
+| toolhub | 48s | 54s | +10% | 0/4 tasks |
+
+Both repos are clearly net-harmful with hints at r=5. These are well-documented
+repos where the agent discovers tools on its own.
+
+### Git workflow (new)
+
+We added push-conflict and dirty-rebase traps — the top git sad paths from
+session mining (244× and 135× respectively). Results (24 sessions, r=3):
+
+| Task | OFF median | ON median | Δ |
+|---|---|---|---|
+| push-after-diverge | 77s | 85s | +10% |
+| push-conflict-multiply | 38s | 36s | −5% |
+| rebase-dirty-subtract | 46s | 47s | +2% |
+| rebase-dirty-upper | 50s | 60s | +20% |
+
+Overall +10% slower with hints. Models handle standard git errors fine.
 
 ### What the data teaches
 
