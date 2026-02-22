@@ -6,6 +6,11 @@ import {
   type ProjectIdentityOverrides,
   resolveProjectIdentity,
 } from "../../core/projectIdentity.js";
+import {
+  type ToolCallHint,
+  formatToolCallHint,
+  matchToolCallReinvention,
+} from "../../core/toolCallHints.js";
 import { classifyTrajectoryIssue } from "../../core/trajectoryOutcomeGate.js";
 import type {
   LearningSuggestion,
@@ -1337,6 +1342,11 @@ export function createPiTraceExtension(
       });
     });
 
+    // Pending tool-call hints: flagged on tool_call, injected on tool_result.
+    const pendingToolCallHints = new Map<string, ToolCallHint>();
+    const toolCallHintsFired = new Set<string>();
+    let toolCallHintTotalCount = 0;
+
     pi.on("tool_call", async (rawEvent) => {
       const event = rawEvent as PiToolCallEvent;
       toolCalls.set(event.toolCallId, {
@@ -1353,6 +1363,15 @@ export function createPiTraceExtension(
           command: commandFromInput(event.input),
         },
       });
+
+      // Proactive hint: detect throwaway heredoc scripts (reinvention patterns).
+      const cmd = commandFromInput(event.input);
+      if (cmd && errorTimeHintMatcher) {
+        const tcHint = matchToolCallReinvention(cmd);
+        if (tcHint && !toolCallHintsFired.has(tcHint.hintId)) {
+          pendingToolCallHints.set(event.toolCallId, tcHint);
+        }
+      }
     });
 
     pi.on("tool_result", async (rawEvent) => {
@@ -1375,6 +1394,38 @@ export function createPiTraceExtension(
           outcome: isError ? "failure" : "success",
         },
       });
+
+      // Proactive tool-call hint: if this call was flagged as a reinvention, inject hint.
+      const pendingTcHint = pendingToolCallHints.get(event.toolCallId);
+      if (pendingTcHint && !isError) {
+        pendingToolCallHints.delete(event.toolCallId);
+        if (!toolCallHintsFired.has(pendingTcHint.hintId)) {
+          toolCallHintsFired.add(pendingTcHint.hintId);
+          toolCallHintTotalCount += 1;
+
+          await ingest({
+            type: "checkpoint",
+            payload: {
+              kind: "happy_paths_tool_call_hint",
+              hintId: pendingTcHint.hintId,
+              detectedPattern: pendingTcHint.detectedPattern,
+              betterAlternative: pendingTcHint.betterAlternative,
+              exampleCommand: pendingTcHint.exampleCommand,
+              confidence: pendingTcHint.confidence,
+              toolCallId: event.toolCallId,
+              toolCallHintTotalCount,
+            },
+            tags: ["happy_paths", "tool_call_hint"],
+          });
+
+          const hintText = formatToolCallHint(pendingTcHint);
+          const existingContent = event.content ?? [];
+          return {
+            content: [...existingContent, { type: "text" as const, text: hintText }],
+          };
+        }
+      }
+      pendingToolCallHints.delete(event.toolCallId);
 
       // Error-time hint interception: match error text → inject fix hint.
       if (!isError || !errorTimeHintMatcher || !text) {
