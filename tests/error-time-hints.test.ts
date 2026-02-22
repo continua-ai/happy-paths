@@ -85,7 +85,7 @@ describe("HardWiredErrorTimeMatcher", () => {
       expect(hint).not.toBeNull();
       expect(hint?.hintId).toBe("err-python-project-setup-recipe");
       expect(hint?.explanation).toContain("python3 -m venv .venv");
-      expect(hint?.explanation).toContain("executable files");
+      expect(hint?.explanation).toContain("executable setup scripts");
     });
 
     it("matches externally-managed-environment", () => {
