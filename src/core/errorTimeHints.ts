@@ -111,7 +111,16 @@ export class HardWiredErrorTimeMatcher implements ErrorTimeHintMatcher {
  * The format is designed to be immediately actionable for an LLM agent:
  * short, explains the cause, gives the fix command.
  */
-export function formatErrorTimeHint(hint: ErrorTimeHint): string {
+export type HintFormat = "verbose" | "terse";
+
+export function formatErrorTimeHint(
+  hint: ErrorTimeHint,
+  format: HintFormat = "verbose",
+): string {
+  if (format === "terse") {
+    // Minimal: just the fix command. Less for the model to parse.
+    return `\n💡 Try: ${hint.fixCommand}`;
+  }
   return [
     "",
     "─── Happy Paths hint (from prior traces) ───",

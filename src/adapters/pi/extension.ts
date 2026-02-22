@@ -1415,7 +1415,9 @@ export function createPiTraceExtension(
       });
 
       // Append the hint to the tool result content the LLM sees.
-      const hintText = formatErrorTimeHint(hint);
+      const hintFormat =
+        process.env.HAPPY_PATHS_HINT_FORMAT === "terse" ? "terse" : "verbose";
+      const hintText = formatErrorTimeHint(hint, hintFormat);
       const existingContent = event.content ?? [];
       return {
         content: [...existingContent, { type: "text" as const, text: hintText }],
