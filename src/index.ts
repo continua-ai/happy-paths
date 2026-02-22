@@ -20,6 +20,7 @@ export * from "./core/trajectoryCalibrationReview.js";
 export * from "./core/trajectoryCalibrationAdjudication.js";
 export * from "./core/familyDisjointLane.js";
 export * from "./core/errorTimeHints.js";
+export * from "./core/toolCallHints.js";
 
 export * from "./backends/local/index.js";
 
