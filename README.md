@@ -281,30 +281,42 @@ isolated one variable:
 | v7 | Undocumented-tool hints + pre-session injection | +31% slower | +42% slower | Hints fire but pre-session overhead dominates |
 | v8 | 3 separate per-error hints + pre-session | +15% slower | +27% slower | Fewer hints = less overhead, but still net-negative |
 | v9 | 1 comprehensive recipe + pre-session | +1% slower | +10% slower | Single hint dramatically better than multiple |
-| **v10** | **1 recipe, error-time only (no pre-session)** | **−5% faster** | **+7% slower** | **Removing pre-session noise flips ledgerkit net-positive** |
+| v10 | 1 recipe, error-time only (no pre-session) | −5% faster | +7% slower | Removing pre-session noise flips ledgerkit net-positive |
+| **v11** | **Prescriptive recipe, error-time only** | **−11% faster** | **−4% faster** | **Explicit `.venv/bin/pytest` prevents model shortcuts** |
 
-### v10 results (current)
+### v11 results (current)
 
-Error-time-only mode with a single setup recipe hint:
+Error-time-only mode with a prescriptive setup recipe. Key wording
+change from v10: "Use `.venv/bin/pytest` (not `pytest` or `python -m
+pytest`)" — this forces the model to create a venv instead of taking
+shortcuts that cause additional errors.
 
 **ledgerkit** (undocumented `./kit` CLI tool, no README):
 
 | Variant | Avg time | Avg errors/run | Avg calls/run |
 |---|---|---|---|
-| OFF (no hints) | 63s | 3.2 | 16.8 |
-| ON (error-time recipe) | 60s | 2.9 | 16.9 |
-| **Δ** | **−5%** | **−0.2 errors** | **+0.2 calls** |
+| OFF (no hints) | 65s | 3.2 | 17.7 |
+| ON (error-time recipe) | 58s | 3.3 | 18.0 |
+| **Δ** | **−11%** | **+0.1 errors** | **+0.3 calls** |
 
 **logparse** (undocumented `./qa` CLI tool, no README):
 
 | Variant | Avg time | Avg errors/run | Avg calls/run |
 |---|---|---|---|
-| OFF (no hints) | 48s | 3.2 | 13.8 |
-| ON (error-time recipe) | 52s | 3.3 | 14.8 |
-| **Δ** | **+7%** | **+0.2 errors** | **+1.1 calls** |
+| OFF (no hints) | 51s | 3.4 | 15.8 |
+| ON (error-time recipe) | 49s | 3.0 | 15.7 |
+| **Δ** | **−4%** | **−0.4 errors** | **−0.1 calls** |
 
-Ledgerkit shows a clear net-positive: faster AND fewer errors with hints.
-Logparse is within noise (+7% is ~4 seconds on a 48s baseline, n=12).
+**webutil** (misdirecting error messages, session fixture timeout trap):
+
+| Variant | Avg time | Avg errors/run | Avg calls/run |
+|---|---|---|---|
+| OFF (no hints) | 91s | 2.7 | 15.7 |
+| ON (error-time recipe) | 92s | 2.5 | 14.8 |
+| **Δ** | **+1%** | **−0.2 errors** | **−0.8 calls** |
+
+Both ledgerkit and logparse are net-positive. Webutil is neutral on time but
+reduces errors and tool calls.
 
 ### What the data teaches
 
@@ -322,14 +334,19 @@ Logparse is within noise (+7% is ~4 seconds on a 48s baseline, n=12).
    Hinting on those is net-harmful — it adds processing overhead without
    saving any steps.
 
-4. **The value gap is narrow but real.** Happy Paths helps most when:
+4. **Be prescriptive, not advisory.** "Use `.venv/bin/pytest`" works better
+   than "create a venv first" because the model can't take a shortcut —
+   `.venv/bin/pytest` won't exist without the venv. Name the specific tools
+   (`./kit`, `./qa`) instead of saying "check for executable files."
+
+5. **The value gap is narrow but real.** Happy Paths helps most when:
    - Error messages point the wrong way (e.g., "See https://internal.docs/"
      for a URL that doesn't exist)
    - The fix requires running a tool that isn't mentioned in any repo file
    - The project uses internal/proprietary tooling that the model has no
      training data for
 
-5. **Modern models are excellent explorers.** Even with zero documentation,
+6. **Modern models are excellent explorers.** Even with zero documentation,
    gpt-5.3-codex discovers undocumented CLI tools via
    `ls → find → read script → execute`. Hints provide a more direct path, but
    the model usually gets there on its own in 3-4 extra steps.

@@ -189,13 +189,12 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     pattern:
       /pytest: command not found|No module named pytest|externally.managed.environment|test data not found|No such file.*\.fixtures|No such file.*\.testdata/i,
     explanation:
-      "This project needs setup before tests will run. " +
-      "Standard recipe: (1) python3 -m venv .venv, " +
-      "(2) .venv/bin/pip install -r requirements-dev.txt, " +
-      "(3) check for project-specific setup scripts in the repo root " +
-      "(look for executable files — run them to initialize test fixtures/data), " +
-      "(4) .venv/bin/pytest tests/ -x to run tests. " +
-      "Do NOT use the system python or pip install globally.",
+      "This project needs a venv before anything will work. " +
+      "Run: python3 -m venv .venv && " +
+      ".venv/bin/pip install -r requirements-dev.txt — " +
+      "then look for executable setup scripts in the repo root " +
+      "(e.g. ./kit, ./qa, ./dev — run them to create test fixtures). " +
+      "Use .venv/bin/pytest (not pytest or python -m pytest) to run tests.",
     fixCommand:
       "python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/pytest tests/ -x",
     confidence: 0.95,
