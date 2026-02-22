@@ -1369,6 +1369,18 @@ if __name__ == "__main__":
 `,
 };
 
+// ─── Scale files (100+ files per repo for realistic discovery) ──────────
+import {
+  DATAQUERY_SCALE_FILES,
+  ISSUETRACKER_SCALE_FILES,
+  OPSBOARD_SCALE_FILES,
+} from "./reinventionScaleFiles.js";
+
+// Merge scale files into the base file dicts.
+Object.assign(ISSUETRACKER_FILES, ISSUETRACKER_SCALE_FILES);
+Object.assign(OPSBOARD_FILES, OPSBOARD_SCALE_FILES);
+Object.assign(DATAQUERY_FILES, DATAQUERY_SCALE_FILES);
+
 // ─── Templates ──────────────────────────────────────────────────────────
 
 export const ISSUETRACKER_TEMPLATE: RepoTemplate = {
