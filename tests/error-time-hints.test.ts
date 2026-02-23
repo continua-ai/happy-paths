@@ -174,7 +174,8 @@ describe("DEFAULT_PATTERNS", () => {
 describe("discoverability gate", () => {
   it("suppresses specific tool hint when tool is documented in README", () => {
     // README documents ./kit AND general setup (venv + pip install + requirements)
-    const readmeWithKit = `# MyProject\n\nRun ./kit init to set up fixtures.\npython -m venv .venv\npip install -r requirements-dev.txt\n`;
+    const readmeWithKit =
+      "# MyProject\n\nRun ./kit init to set up fixtures.\npython -m venv .venv\npip install -r requirements-dev.txt\n";
     const matcher = new HardWiredErrorTimeMatcher({ repoDocsText: readmeWithKit });
 
     // Both the ./kit hint AND the setup recipe should be suppressed.
@@ -183,7 +184,7 @@ describe("discoverability gate", () => {
   });
 
   it("fires hints when tool is NOT documented", () => {
-    const readmeWithoutKit = `# MyProject\n\nA simple Python project.\n`;
+    const readmeWithoutKit = "# MyProject\n\nA simple Python project.\n";
     const matcher = new HardWiredErrorTimeMatcher({ repoDocsText: readmeWithoutKit });
 
     // Both ./kit and setup recipe should fire (neither is documented).
@@ -206,7 +207,8 @@ describe("discoverability gate", () => {
   });
 
   it("suppresses git push hint when README documents --force-with-lease", () => {
-    const readme = `# Git Workflow\n\nUse git push --force-with-lease after rebasing.\n`;
+    const readme =
+      "# Git Workflow\n\nUse git push --force-with-lease after rebasing.\n";
     const matcher = new HardWiredErrorTimeMatcher({ repoDocsText: readme });
 
     const hint = matcher.match(
@@ -216,7 +218,7 @@ describe("discoverability gate", () => {
   });
 
   it("fires git push hint when README has no git guidance", () => {
-    const readme = `# MyProject\n\nA Python utility library.\n`;
+    const readme = "# MyProject\n\nA Python utility library.\n";
     const matcher = new HardWiredErrorTimeMatcher({ repoDocsText: readme });
 
     const hint = matcher.match(
@@ -227,7 +229,7 @@ describe("discoverability gate", () => {
   });
 
   it("suppresses fmt-before-lint when README documents fmt", () => {
-    const readme = `# Build\n\nRun ./mb fmt before linting.\n`;
+    const readme = "# Build\n\nRun ./mb fmt before linting.\n";
     const matcher = new HardWiredErrorTimeMatcher({ repoDocsText: readme });
 
     const hint = matcher.match("FORMATTING CHECK FAILED: run format first");

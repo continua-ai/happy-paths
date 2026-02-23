@@ -133,8 +133,7 @@ export class HardWiredErrorTimeMatcher implements ErrorTimeHintMatcher {
         pattern.discoverabilityKeywords.length > 0
       ) {
         const mode = pattern.discoverabilityMode ?? "all";
-        const check = (kw: string) =>
-          this.docsText.includes(kw.toLowerCase());
+        const check = (kw: string) => this.docsText.includes(kw.toLowerCase());
         const isDiscoverable =
           mode === "any"
             ? pattern.discoverabilityKeywords.some(check)
@@ -308,7 +307,16 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     confidence: 0.95,
     // Suppress if README documents ANY setup mechanism.
     // "any" mode: if the repo documents ANY of these, the agent can find the setup path.
-    discoverabilityKeywords: ["./th setup", "./kit", "./qa setup", "./dev setup", "./mb", "pip install -r requirements", "make setup", "make install"],
+    discoverabilityKeywords: [
+      "./th setup",
+      "./kit",
+      "./qa setup",
+      "./dev setup",
+      "./mb",
+      "pip install -r requirements",
+      "make setup",
+      "make install",
+    ],
     discoverabilityMode: "any",
   },
 
