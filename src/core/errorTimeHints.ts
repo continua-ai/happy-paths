@@ -53,10 +53,45 @@ export interface HardWiredPattern {
   explanation: string;
   fixCommand: string;
   confidence: number;
+
+  /**
+   * Keywords that, if found in README.md or AGENTS.md, indicate the fix is
+   * already discoverable and this hint should be suppressed.
+   *
+   * Matching logic depends on `discoverabilityMode`:
+   * - "all" (default): ALL keywords must be present → suppress
+   * - "any": ANY keyword present → suppress
+   *
+   * Example: if the hint is about running `./kit`, and README.md mentions
+   * `./kit`, the agent will find it on its own — hinting just adds overhead.
+   *
+   * If empty or undefined, the hint always fires (no discoverability gate).
+   */
+  discoverabilityKeywords?: string[];
+
+  /**
+   * "all" = suppress only if ALL keywords found (default, for specific tools).
+   * "any" = suppress if ANY keyword found (for generic recipes with many possible fixes).
+   */
+  discoverabilityMode?: "all" | "any";
+}
+
+/**
+ * Scan repo docs (README.md, AGENTS.md) for discoverability matching.
+ *
+ * Returns the lowercased doc text for substring matching. Keywords are
+ * checked as substrings so multi-word phrases like "pip install" and
+ * paths like "./kit" match naturally.
+ */
+export function scanRepoForDiscoverability(repoDocsText: string): string {
+  return repoDocsText.toLowerCase();
 }
 
 /**
  * Prototype matcher with hand-wired error → fix patterns.
+ *
+ * Supports an optional discoverability gate: if `repoDocsText` is provided,
+ * hints whose fix is already documented in the repo are suppressed.
  *
  * These patterns are based on the recurring traps in the benchmark,
  * but they're general enough to match in any Python project with
@@ -64,9 +99,20 @@ export interface HardWiredPattern {
  */
 export class HardWiredErrorTimeMatcher implements ErrorTimeHintMatcher {
   private readonly patterns: HardWiredPattern[];
+  private readonly docsText: string;
 
-  constructor(patterns?: HardWiredPattern[]) {
-    this.patterns = patterns ?? DEFAULT_PATTERNS;
+  constructor(options?: {
+    patterns?: HardWiredPattern[];
+    /**
+     * Concatenated text of README.md + AGENTS.md (or any repo docs).
+     * Used to suppress hints for tools already documented in the repo.
+     */
+    repoDocsText?: string;
+  }) {
+    this.patterns = options?.patterns ?? DEFAULT_PATTERNS;
+    this.docsText = options?.repoDocsText
+      ? scanRepoForDiscoverability(options.repoDocsText)
+      : "";
   }
 
   match(errorText: string): ErrorTimeHint | null {
@@ -80,6 +126,23 @@ export class HardWiredErrorTimeMatcher implements ErrorTimeHintMatcher {
     let bestMatch: ErrorTimeHint | null = null;
 
     for (const pattern of this.patterns) {
+      // Discoverability gate: skip if the fix is already documented.
+      if (
+        this.docsText &&
+        pattern.discoverabilityKeywords &&
+        pattern.discoverabilityKeywords.length > 0
+      ) {
+        const mode = pattern.discoverabilityMode ?? "all";
+        const check = (kw: string) => this.docsText.includes(kw.toLowerCase());
+        const isDiscoverable =
+          mode === "any"
+            ? pattern.discoverabilityKeywords.some(check)
+            : pattern.discoverabilityKeywords.every(check);
+        if (isDiscoverable) {
+          continue;
+        }
+      }
+
       const regexMatch = pattern.pattern.exec(normalized);
       if (!regexMatch) {
         continue;
@@ -242,6 +305,19 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     fixCommand:
       "python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/pytest tests/ -x",
     confidence: 0.95,
+    // Suppress if README documents ANY setup mechanism.
+    // "any" mode: if the repo documents ANY of these, the agent can find the setup path.
+    discoverabilityKeywords: [
+      "./th setup",
+      "./kit",
+      "./qa setup",
+      "./dev setup",
+      "./mb",
+      "pip install -r requirements",
+      "make setup",
+      "make install",
+    ],
+    discoverabilityMode: "any",
   },
 
   // ═══ EXPERIENCE-ONLY TRAPS (misdirecting errors) ═══
@@ -269,6 +345,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
       "This project has a ./kit tool — run ./kit init to create fixtures.",
     fixCommand: "./kit init && pytest tests/ -x",
     confidence: 0.9,
+    // Only hint if ./kit isn't documented.
+    discoverabilityKeywords: ["./kit"],
   },
 
   // --- tool_setup: undocumented test data tool (logparse) ---
@@ -281,6 +359,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
       "This project has a ./qa tool — run ./qa setup to create test data.",
     fixCommand: "./qa setup && pytest tests/ -x",
     confidence: 0.9,
+    // Only hint if ./qa isn't documented.
+    discoverabilityKeywords: ["./qa"],
   },
 
   // --- tool_flag: test timeout from slow session fixture ---
@@ -344,6 +424,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
       "Look for a format command: ./mb fmt, ./proj fmt, pants fmt, etc.",
     fixCommand: "run the project's format command first (e.g. ./mb fmt)",
     confidence: 0.95,
+    // Suppress if README documents the format command.
+    discoverabilityKeywords: ["fmt"],
   },
 
   // --- tool_flag: wrong build target syntax (368x in real sessions) ---
@@ -357,6 +439,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     fixCommand:
       "use module name as target (e.g. ./mb test calc, not ./mb test src/calc.py)",
     confidence: 0.95,
+    // Suppress if README documents target syntax.
+    discoverabilityKeywords: ["./mb test", "./mb lint"],
   },
 
   // --- tool_setup: hallucinated tool name (92x in real sessions) ---
@@ -370,6 +454,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
       "Check the repo root for executable scripts (ls -la *.sh ./th ./run ./dev ./mb).",
     fixCommand: "ls -la the repo root for actual CLI tools (e.g. ./th, ./dev, ./run)",
     confidence: 0.9,
+    // Suppress if README documents the actual setup tool.
+    discoverabilityKeywords: ["./th setup"],
   },
 
   // --- tool_setup: config not found + hallucinated setup tool ---
@@ -385,6 +471,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     fixCommand:
       "look for setup scripts: ls -la ./th ./dev ./run (then run <tool> setup)",
     confidence: 0.95,
+    // Suppress if README documents the setup tool.
+    discoverabilityKeywords: ["./th setup"],
   },
 
   // ═══ GIT WORKFLOW TRAPS ═══
@@ -400,6 +488,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
     fixCommand:
       "git fetch origin && git rebase origin/<branch> && git push --force-with-lease",
     confidence: 0.95,
+    // Suppress if docs mention the recovery workflow.
+    discoverabilityKeywords: ["--force-with-lease"],
   },
   {
     hintId: "err-rebase-dirty-tree",
@@ -411,6 +501,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
       "then rebase, then pop the stash.",
     fixCommand: "git stash && git rebase origin/main && git stash pop",
     confidence: 0.95,
+    // Suppress if docs mention rebase workflow.
+    discoverabilityKeywords: ["git rebase"],
   },
   {
     hintId: "err-worktree-already-checked-out",
@@ -421,6 +513,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
       "Check which worktrees exist and navigate to the right one.",
     fixCommand: "git worktree list (then cd to the correct worktree)",
     confidence: 0.95,
+    // Suppress if docs mention worktree usage.
+    discoverabilityKeywords: ["git worktree"],
   },
 
   // ═══ EASY TRAPS (disabled — models handle these fine) ═══

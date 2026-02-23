@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -137,8 +138,30 @@ export default function happyPathsPiExtension(pi: PiLikeApi): void {
   // Enabled when HAPPY_PATHS_ERROR_TIME_HINTS is not "off".
   const errorTimeHintsEnabled =
     (process.env.HAPPY_PATHS_ERROR_TIME_HINTS ?? "").trim().toLowerCase() !== "off";
+
+  // Discoverability gate: scan README.md + AGENTS.md so we suppress hints
+  // for tools/fixes already documented in the repo.
+  let repoDocsText: string | undefined;
+  if (errorTimeHintsEnabled) {
+    const cwd = process.cwd();
+    const parts: string[] = [];
+    for (const docFile of ["README.md", "AGENTS.md", "readme.md"]) {
+      const docPath = join(cwd, docFile);
+      if (existsSync(docPath)) {
+        try {
+          parts.push(readFileSync(docPath, "utf-8"));
+        } catch {
+          // Ignore read errors.
+        }
+      }
+    }
+    if (parts.length > 0) {
+      repoDocsText = parts.join("\n");
+    }
+  }
+
   const errorTimeHintMatcher = errorTimeHintsEnabled
-    ? new HardWiredErrorTimeMatcher()
+    ? new HardWiredErrorTimeMatcher({ repoDocsText })
     : undefined;
 
   createPiTraceExtension({

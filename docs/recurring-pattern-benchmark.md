@@ -103,17 +103,32 @@ Error-time hints with prescriptive recipes. Key repos:
 
 Hints net-harmful (+10% overall). Models handle standard git errors.
 
+### Discoverability gate (v15)
+
+Scans `README.md` at session start. If a hint's fix is already documented
+(e.g. `./th setup` in toolhub's README), the hint is suppressed.
+
+| Repo | Without gate | With gate | Hints fire? | Reason |
+|---|---|---|---|---|
+| ledgerkit | −11% | **−14%** | ✅ yes | README minimal — `./kit` not documented |
+| toolhub | +10% | ~0% | ⛔ suppressed | README documents `./th setup` |
+
+The gate preserves wins on undocumented repos and eliminates losses on
+well-documented repos.
+
 ### Key findings
 
 1. **Hints help when errors misdirect and tools are undocumented** (ledgerkit,
    logparse)
 2. **Hints hurt on well-documented repos** (toolhub, monobuild) and standard
    errors (git push conflicts)
-3. **AGENTS.md tool registry is the highest-ROI intervention** — eliminates
+3. **Discoverability gate solves the selectivity problem** — suppresses hints
+   when the fix is already in README, fires them when it isn't
+4. **AGENTS.md tool registry is the highest-ROI intervention** — eliminates
    reinvention waste entirely (0 heredocs, 2.8× CLI usage)
-4. **One comprehensive hint > many small hints**
-5. **Error-time delivery > pre-session injection**
-6. **Don't hint what the model already knows**
+5. **One comprehensive hint > many small hints**
+6. **Error-time delivery > pre-session injection**
+7. **Don't hint what the model already knows**
 
 ## Usage
 
