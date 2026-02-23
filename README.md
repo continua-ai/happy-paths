@@ -52,29 +52,43 @@ detour.
 Happy Paths remembers what worked and intervenes at the moment of failure,
 before the agent wastes steps rediscovering the fix.
 
-## Where it helps (and where it doesn't)
+## Two wins, one thesis
 
-We ran 17 benchmark iterations (~800+ runs across two benchmark suites) to
-find the right intervention designs. Honest findings:
+We ran 17 benchmark iterations (~1,000+ runs across three suites) to find
+what actually works. The thesis: **Happy Paths doesn't make smart models
+smarter at things they already know. It makes undiscoverable things
+discoverable.**
 
-**Where it helps**: projects with undocumented setup steps, internal CLI tools,
-or error messages that point the wrong way. These are the cases where a model
-has no prior training data and can't infer the fix from repo files alone.
+### Win 1: Tool registry eliminates reinvention waste (−100%)
 
-**Where it also helps**: repos where agents waste tokens reinventing existing
-tools. Session mining found 9,012 throwaway scripts (~2.3M wasted tokens)
-across 300 sessions. A simple `AGENTS.md` tool registry eliminated this
-entirely (0 heredocs, 2.8x CLI usage).
+Mining 300 real sessions revealed 9,012 throwaway inline scripts (~2.3M
+wasted tokens). Agents kept rewriting the same Linear API / GCloud boilerplate
+because existing tools weren't discoverable. A 10-line markdown table in
+`AGENTS.md` fixed it completely:
 
-**Where it doesn't help**: well-documented projects, standard toolchain errors,
-or situations where the model can figure out the fix by reading `README.md` and
-exploring the repo. Modern models (gpt-5.3-codex) are surprisingly good at
-`ls → find → read → execute` discovery loops.
+| Metric | Without registry | With registry |
+|---|---|---|
+| Throwaway heredocs (36 runs) | 9 | **0** |
+| CLI tool usage | 59 | **163 (2.8×)** |
+| Wasted tokens | 1,048 | **0** |
 
-**What actively hurts**: injecting too many hints, injecting hints too early
-(before the agent has context), or injecting generic "prior failure" warnings.
-More is not better — one precise hint at the right moment beats three hints
-across three errors.
+Cost: ~200 tokens in the system prompt. Savings: ~1,000+ per session.
+
+### Win 2: Error-time hints save 4–11% on undocumented repos
+
+When a repo has no README and the only way to run tests is an undocumented
+CLI tool, hints at the moment of error give the agent a direct path:
+
+| Repo | What's missing | Δ time |
+|---|---|---|
+| ledgerkit | No README, `./kit` CLI undiscoverable | **−11%** |
+| logparse | No README, `./qa` CLI undiscoverable | **−4%** |
+
+### Where it doesn't help
+
+- **Well-documented repos** (toolhub +10%, monobuild +7%): agent reads README
+- **Standard errors** (git push conflicts +10%, venv setup): model already knows
+- **Too many hints** or **hints injected too early**: adds noise, net-harmful
 
 See [Benchmark results](#benchmark-results) below for the full data.
 
