@@ -84,10 +84,20 @@ CLI tool, hints at the moment of error give the agent a direct path:
 | ledgerkit | No README, `./kit` CLI undiscoverable | **−11%** |
 | logparse | No README, `./qa` CLI undiscoverable | **−4%** |
 
+### Discoverability gate: selective hint suppression
+
+Not all repos need hints. A **discoverability gate** scans `README.md` at
+session start and suppresses hints when the fix is already documented:
+
+| Repo | Without gate | With gate | Why |
+|---|---|---|---|
+| ledgerkit | −11% | **−14%** | README doesn't document `./kit` → hint fires |
+| toolhub | +10% | ~0% | README documents `./th setup` → hint suppressed |
+
 ### Where it doesn't help
 
-- **Well-documented repos** (toolhub +10%, monobuild +7%): agent reads README
-- **Standard errors** (git push conflicts +10%, venv setup): model already knows
+- **Well-documented repos**: agent reads README (gate now suppresses hints here)
+- **Standard errors** (git push conflicts, venv setup): model already knows
 - **Too many hints** or **hints injected too early**: adds noise, net-harmful
 
 See [Benchmark results](#benchmark-results) below for the full data.

@@ -4,6 +4,7 @@ import {
   DEFAULT_PATTERNS,
   HardWiredErrorTimeMatcher,
   formatErrorTimeHint,
+  scanRepoForDiscoverability,
 } from "../src/core/errorTimeHints.js";
 
 describe("HardWiredErrorTimeMatcher", () => {
@@ -167,5 +168,78 @@ describe("DEFAULT_PATTERNS", () => {
   it("hint IDs are unique", () => {
     const ids = DEFAULT_PATTERNS.map((p) => p.hintId);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("discoverability gate", () => {
+  it("suppresses specific tool hint when tool is documented in README", () => {
+    // README documents ./kit AND general setup (venv + pip install + requirements)
+    const readmeWithKit = `# MyProject\n\nRun ./kit init to set up fixtures.\npython -m venv .venv\npip install -r requirements-dev.txt\n`;
+    const matcher = new HardWiredErrorTimeMatcher({ repoDocsText: readmeWithKit });
+
+    // Both the ./kit hint AND the setup recipe should be suppressed.
+    const hint = matcher.match("test data not found in .fixtures directory");
+    expect(hint).toBeNull();
+  });
+
+  it("fires hints when tool is NOT documented", () => {
+    const readmeWithoutKit = `# MyProject\n\nA simple Python project.\n`;
+    const matcher = new HardWiredErrorTimeMatcher({ repoDocsText: readmeWithoutKit });
+
+    // Both ./kit and setup recipe should fire (neither is documented).
+    // Setup recipe fires first since it has higher confidence and matches the pattern.
+    const hint = matcher.match("test data not found in .fixtures directory");
+    expect(hint).not.toBeNull();
+    // Either the setup recipe or the specific ./kit hint is fine — both help.
+    expect([
+      "err-python-project-setup-recipe",
+      "err-undocumented-fixtures-tool",
+    ]).toContain(hint?.hintId);
+  });
+
+  it("fires hints when no repoDocsText is provided", () => {
+    const matcher = new HardWiredErrorTimeMatcher();
+
+    // No docs → no suppression.
+    const hint = matcher.match("test data not found in .fixtures directory");
+    expect(hint).not.toBeNull();
+  });
+
+  it("suppresses git push hint when README documents --force-with-lease", () => {
+    const readme = `# Git Workflow\n\nUse git push --force-with-lease after rebasing.\n`;
+    const matcher = new HardWiredErrorTimeMatcher({ repoDocsText: readme });
+
+    const hint = matcher.match(
+      "error: failed to push some refs. Updates were rejected",
+    );
+    expect(hint).toBeNull();
+  });
+
+  it("fires git push hint when README has no git guidance", () => {
+    const readme = `# MyProject\n\nA Python utility library.\n`;
+    const matcher = new HardWiredErrorTimeMatcher({ repoDocsText: readme });
+
+    const hint = matcher.match(
+      "error: failed to push some refs. Updates were rejected",
+    );
+    expect(hint).not.toBeNull();
+    expect(hint?.hintId).toBe("err-push-rejected-diverged");
+  });
+
+  it("suppresses fmt-before-lint when README documents fmt", () => {
+    const readme = `# Build\n\nRun ./mb fmt before linting.\n`;
+    const matcher = new HardWiredErrorTimeMatcher({ repoDocsText: readme });
+
+    const hint = matcher.match("FORMATTING CHECK FAILED: run format first");
+    expect(hint).toBeNull();
+  });
+
+  it("scanRepoForDiscoverability lowercases for substring matching", () => {
+    const text = scanRepoForDiscoverability(
+      "Run ./kit init and pip install -r requirements.txt",
+    );
+    expect(text.includes("./kit")).toBe(true);
+    expect(text.includes("pip install")).toBe(true);
+    expect(text.includes("requirements.txt")).toBe(true);
   });
 });
