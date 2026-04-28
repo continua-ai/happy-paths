@@ -92,6 +92,25 @@ Error-time hints with prescriptive recipes. Key repos:
 | v3 + hints | Tool-call hints | 6 | 67 | 971 (−7%) |
 | **v4 registry** | **AGENTS.md tool registry** | **0** | **163 (2.8×)** | **0 (−100%)** |
 
+### Continua dogfood command mapping
+
+The synthetic reinvention traps mirror the private Continua dogfood surface, but
+current Continua hints must name the Gravity Development OS front doors rather
+than legacy one-off scripts:
+
+- Linear work: `./gravity-cli tool linear -- ...`
+- proof/CI/release: `./gravity-cli proof plan`, `./gravity-cli proof run`,
+  `./gravity-cli submit`, `./gravity-cli watch`, and
+  `./gravity-cli release status`
+- Python survivor checks: Bazel-backed lanes such as
+  `bazelisk test //tools/python:surviving_python_compile_test`, not Pants
+- LSP: use the dynamic policy from `docs/agents/lsp_workflow.md` in
+  `continua-ai/workspace` instead of blanket "always call LSP" prompts
+- cloud logs: `./gravity-cli tool stack-log-check -- ...`
+
+Keep trace-mined evidence behind these hints at team-private scope and cite the
+issue/design-doc snapshot rather than copying raw traces into public docs.
+
 ### Git workflow
 
 | Task | OFF median | ON median | Delta |

@@ -16,9 +16,18 @@
  *
  * Mined from 300 real Pi sessions:
  * - 1,632 throwaway Linear API scripts (~579K tokens)
- * - 2,264 throwaway GCloud scripts (~697K tokens)
+ * - 2,264 throwaway cloud-log/deploy scripts (~697K tokens)
  * - 775 JSON processing heredocs that could use jq (~72K tokens)
+ *
+ * Continua workspace hints are versioned to the Gravity Development OS command
+ * surface. Trace-derived evidence stays team-private; hint text must name only
+ * checked commands/docs and must not include raw trace payloads.
  */
+
+const CONTINUA_GRAVITY_HINT_POLICY_VERSION = "continua-gravity-dev-os-2026-04-27";
+const CONTINUA_GRAVITY_HINT_EVIDENCE_REF = "CON-4555/CON-4556/CON-4569/CON-4594";
+const TEAM_PRIVATE_TRACE_HINT_BOUNDARY =
+  "team_private trace-derived aggregate; no raw trace content included";
 
 /** A proactive hint about a better alternative to the current approach. */
 export interface ToolCallHint {
@@ -33,6 +42,15 @@ export interface ToolCallHint {
 
   /** Example command for the better alternative. */
   exampleCommand: string;
+
+  /** Versioned policy/source snapshot backing this hint. */
+  policyVersion?: string;
+
+  /** Evidence or issue/report reference used to justify this hint. */
+  evidenceRef?: string;
+
+  /** Privacy/trust boundary for trace-derived evidence behind this hint. */
+  trustBoundary?: string;
 
   /** Confidence (0–1). */
   confidence: number;
@@ -60,10 +78,11 @@ const REINVENTION_PATTERNS: ReinventionPattern[] = [
     minLines: 15,
     detectedPattern: "Inline Linear API mutation script",
     betterAlternative:
-      "Consider extending `scripts/linear_consolidation.py` with this operation, " +
-      "or saving the script to /tmp/ so it can be reused.",
+      "In the Continua workspace, use the registered Linear tool via " +
+      "`./gravity-cli tool linear -- ...`; extend that checked tool for reusable " +
+      "operations instead of writing inline GraphQL mutations.",
     exampleCommand:
-      "Write to /tmp/linear_update.py and run it, or extend linear_consolidation.py",
+      "./gravity-cli tool linear -- comment CON-1234 --body-file /tmp/comment.md --apply",
     confidence: 0.85,
   },
 
@@ -75,9 +94,10 @@ const REINVENTION_PATTERNS: ReinventionPattern[] = [
     minLines: 15,
     detectedPattern: "Inline Linear API query script",
     betterAlternative:
-      "This repo has `scripts/linear_consolidation.py` with dump and search commands.",
-    exampleCommand:
-      "pants run scripts:linear_consolidation -- dump --key CON-1234 --out /tmp/issue.md",
+      "In the Continua workspace, use the registered Linear tool via " +
+      "`./gravity-cli tool linear -- ...`; use dump/search helpers before writing " +
+      "inline GraphQL queries.",
+    exampleCommand: "./gravity-cli tool linear -- dump CON-1234 --out /tmp/issue.md",
     confidence: 0.9,
   },
 
@@ -85,13 +105,14 @@ const REINVENTION_PATTERNS: ReinventionPattern[] = [
   {
     hintId: "reinvent-gcloud-logging",
     commandPattern:
-      /python3?\s+(-\s+)?<<[\s\S]*?(?:gcloud.*logging|cloud_logging|CloudLogging)/i,
+      /python3?\s+(-\s+)?<<[\s\S]*?(?:gcloud.*logging|cloud_logging|CloudLogging|logging_v2)/i,
     minLines: 10,
-    detectedPattern: "Inline GCloud logging query script",
+    detectedPattern: "Inline cloud logging query script",
     betterAlternative:
-      "This repo has `sophon/scripts/triage_prod_logs.py` for log queries.",
+      "In the Continua workspace, use the registered stack log checker before " +
+      "writing throwaway Cloud Logging scripts.",
     exampleCommand:
-      "pants run sophon/scripts:triage_prod_logs -- --env prod --since-hours 6",
+      "./gravity-cli tool stack-log-check -- --env staging --since-hours 6",
     confidence: 0.85,
   },
 
@@ -102,8 +123,10 @@ const REINVENTION_PATTERNS: ReinventionPattern[] = [
       /python3?\s+(-\s+)?<<[\s\S]*?(?:cloud_run|gcloud.*run|terraform.*apply|deploy.*status)/i,
     minLines: 10,
     detectedPattern: "Inline deploy/infra status script",
-    betterAlternative: "This repo has `./dx deploy` subcommands for deploy status.",
-    exampleCommand: "./dx deploy watch --service sophon --env staging",
+    betterAlternative:
+      "In the Continua workspace, use Gravity release/roll/proof helpers for " +
+      "deploy status instead of retired wrappers or ad-hoc Cloud Run scripts.",
+    exampleCommand: "./gravity-cli release status",
     confidence: 0.8,
   },
 
@@ -132,6 +155,22 @@ const REINVENTION_PATTERNS: ReinventionPattern[] = [
   },
 ];
 
+function attachContinuaGravityHintMetadata(hint: ToolCallHint): ToolCallHint {
+  if (
+    !hint.hintId.startsWith("reinvent-linear-") &&
+    !hint.hintId.startsWith("reinvent-gcloud-")
+  ) {
+    return hint;
+  }
+
+  return {
+    ...hint,
+    policyVersion: CONTINUA_GRAVITY_HINT_POLICY_VERSION,
+    evidenceRef: CONTINUA_GRAVITY_HINT_EVIDENCE_REF,
+    trustBoundary: TEAM_PRIVATE_TRACE_HINT_BOUNDARY,
+  };
+}
+
 /**
  * Check if a bash command matches a reinvention pattern.
  * Returns the hint to inject, or null.
@@ -150,13 +189,13 @@ export function matchToolCallReinvention(bashCommand: string): ToolCallHint | nu
     if (!pattern.commandPattern.test(bashCommand)) {
       continue;
     }
-    return {
+    return attachContinuaGravityHintMetadata({
       hintId: pattern.hintId,
       detectedPattern: pattern.detectedPattern,
       betterAlternative: pattern.betterAlternative,
       exampleCommand: pattern.exampleCommand,
       confidence: pattern.confidence,
-    };
+    });
   }
 
   return null;
@@ -166,11 +205,20 @@ export function matchToolCallReinvention(bashCommand: string): ToolCallHint | nu
  * Format a tool-call hint for injection into tool_result content.
  */
 export function formatToolCallHint(hint: ToolCallHint): string {
+  const metadata = [
+    `confidence ${Math.round(hint.confidence * 100)}%`,
+    hint.policyVersion ? `policy ${hint.policyVersion}` : null,
+    hint.trustBoundary ? `boundary ${hint.trustBoundary}` : null,
+  ].filter((value): value is string => Boolean(value));
+
   return [
     "",
     "─── Happy Paths tip (reusable tool available) ───",
     `${hint.betterAlternative}`,
     `Example: ${hint.exampleCommand}`,
+    metadata.length > 0 ? `Source: ${metadata.join(" · ")}` : null,
     "──────────────────────────────────────────────────",
-  ].join("\n");
+  ]
+    .filter((value): value is string => value !== null)
+    .join("\n");
 }
