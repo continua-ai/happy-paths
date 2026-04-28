@@ -138,7 +138,7 @@ describe("feasibility scenario pack", () => {
               id: "call-1",
               name: "bash",
               arguments: {
-                command: "./pants package sophon:auto_eval_job",
+                command: "./dx pr check --quick",
               },
             },
           ],
@@ -155,7 +155,7 @@ describe("feasibility scenario pack", () => {
           content: [
             {
               type: "text",
-              text: "./pants: command not found\n\nCommand exited with code 127",
+              text: "./dx is retired; use ./gravity-cli proof run instead\n\nCommand exited with code 1",
             },
           ],
         },
@@ -180,7 +180,7 @@ describe("feasibility scenario pack", () => {
               id: "call-2",
               name: "bash",
               arguments: {
-                command: "pants package sophon:auto_eval_job",
+                command: "./gravity-cli proof run",
               },
             },
           ],
@@ -197,7 +197,7 @@ describe("feasibility scenario pack", () => {
           content: [
             {
               type: "text",
-              text: "12:43 [INFO] Wrote dist/sophon/auto_eval_job.pex",
+              text: "Gravity proof run completed successfully",
             },
           ],
         },
@@ -207,8 +207,8 @@ describe("feasibility scenario pack", () => {
     const templates = extractWrongTurnScenarioTemplatesFromPiSessionRecords(records);
     expect(templates.length).toBe(1);
     expect(templates[0]?.id).toContain("pi-session-1-recovery");
-    expect(templates[0]?.query.text.toLowerCase()).toContain("command not found");
-    expect(templates[0]?.expectedPhrases).toContain("pants");
+    expect(templates[0]?.query.text.toLowerCase()).toContain("retired");
+    expect(templates[0]?.expectedPhrases).toContain("gravitycli");
 
     const captureEvents = templates[0]?.captureEvents ?? [];
     expect(captureEvents.length).toBe(2);

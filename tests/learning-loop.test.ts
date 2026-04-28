@@ -576,6 +576,49 @@ describe("LearningLoop", () => {
     expect(suggestions[0]?.evidenceEventIds).toEqual(["event-targeted"]);
   });
 
+  it("treats repo-wide Bazel sweeps as low-signal when a survivor lane exists", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
+    tempDirs.push(dir);
+
+    const loop = new LearningLoop({
+      store: new FileTraceStore(dir),
+      index: new StaticResultIndex([
+        {
+          document: {
+            id: "doc-bazel-wide",
+            sourceEventId: "event-bazel-wide",
+            text: 'tool_result pi {"command":"bazelisk test //...","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 10,
+        },
+        {
+          document: {
+            id: "doc-bazel-survivor",
+            sourceEventId: "event-bazel-survivor",
+            text: 'tool_result pi {"command":"bazelisk test //tools/python:surviving_python_compile_test","isError":false}',
+            metadata: {
+              eventType: "tool_result",
+              isError: false,
+              outcome: "success",
+            },
+          },
+          score: 4,
+        },
+      ]),
+    });
+
+    const suggestions = await loop.suggest({ text: "python survivor lane" });
+
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]?.title).toBe("Related prior tool result");
+    expect(suggestions[0]?.evidenceEventIds).toEqual(["event-bazel-survivor"]);
+  });
+
   it("falls back to a low-signal hint when no better retrieval exists", async () => {
     const dir = await mkdtemp(join(tmpdir(), "happy-paths-"));
     tempDirs.push(dir);

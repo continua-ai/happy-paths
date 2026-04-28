@@ -421,8 +421,8 @@ export const DEFAULT_PATTERNS: HardWiredPattern[] = [
       /(?:FORMATTING CHECK FAILED|style check failed|would reformat|format first|Run.*fmt)/i,
     explanation:
       "This project requires formatting before lint/test will pass. " +
-      "Look for a format command: ./mb fmt, ./proj fmt, pants fmt, etc.",
-    fixCommand: "run the project's format command first (e.g. ./mb fmt)",
+      "Look for the repo-owned format command or language formatter (for example ./mb fmt, bun run lint --fix, gofmt, or bazelisk run //:format if documented).",
+    fixCommand: "run the project's documented format command first (e.g. ./mb fmt)",
     confidence: 0.95,
     // Suppress if README documents the format command.
     discoverabilityKeywords: ["fmt"],

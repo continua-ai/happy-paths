@@ -27,7 +27,10 @@ PY`;
     const hint = matchToolCallReinvention(cmd);
     expect(hint).not.toBeNull();
     expect(hint?.hintId).toBe("reinvent-linear-query");
-    expect(hint?.betterAlternative).toContain("linear_consolidation");
+    expect(hint?.betterAlternative).toContain("./gravity-cli tool linear");
+    expect(hint?.exampleCommand).toContain("--out /tmp/issue.md");
+    expect(hint?.policyVersion).toContain("continua-gravity-dev-os");
+    expect(hint?.trustBoundary).toContain("team_private");
   });
 
   it("matches Linear API mutation heredoc", () => {
@@ -52,6 +55,46 @@ PY`;
     const hint = matchToolCallReinvention(cmd);
     expect(hint).not.toBeNull();
     expect(hint?.hintId).toBe("reinvent-linear-mutation");
+  });
+
+  it("matches cloud logging heredoc with current Gravity stack-log helper", () => {
+    const cmd = `python3 - << 'PY'
+import json
+from google.cloud import logging_v2
+project = 'thoughter'
+env = 'staging'
+client = logging_v2.Client(project=project)
+query = f'''resource.type="cloud_run_revision" labels.env="{env}" severity>=WARNING'''
+entries = client.list_entries(filter_=query, page_size=50)
+for entry in entries:
+    print(json.dumps(entry.to_api_repr()))
+PY`;
+    const hint = matchToolCallReinvention(cmd);
+    expect(hint).not.toBeNull();
+    expect(hint?.hintId).toBe("reinvent-gcloud-logging");
+    expect(hint?.exampleCommand).toContain("./gravity-cli tool stack-log-check");
+    expect(hint?.exampleCommand).not.toContain("pants");
+  });
+
+  it("matches deploy status heredoc with current Gravity release helper", () => {
+    const cmd = `python3 - << 'PY'
+import json
+import subprocess
+import sys
+project = 'thoughter'
+service_name = 'gravity-runtime-staging'
+args = ['gcloud', 'run', 'services', 'describe', service_name, '--project', project, '--format=json']
+result = subprocess.run(args, capture_output=True, text=True)
+if result.returncode:
+    sys.exit(result.stderr)
+service = json.loads(result.stdout)
+print(service['status']['latestReadyRevisionName'])
+PY`;
+    const hint = matchToolCallReinvention(cmd);
+    expect(hint).not.toBeNull();
+    expect(hint?.hintId).toBe("reinvent-gcloud-deploy");
+    expect(hint?.exampleCommand).toBe("./gravity-cli release status");
+    expect(hint?.betterAlternative).not.toContain("./dx");
   });
 
   it("matches JSON extraction heredoc", () => {
@@ -87,13 +130,17 @@ describe("formatToolCallHint", () => {
     const hint = {
       hintId: "reinvent-linear-query",
       detectedPattern: "Inline Linear API query",
-      betterAlternative: "Use linear_consolidation.py",
-      exampleCommand: "pants run scripts:linear_consolidation -- dump --key CON-1234",
+      betterAlternative: "Use ./gravity-cli tool linear",
+      exampleCommand: "./gravity-cli tool linear -- dump CON-1234 --out /tmp/issue.md",
+      policyVersion: "continua-gravity-dev-os-2026-04-27",
+      trustBoundary: "team_private trace-derived aggregate",
       confidence: 0.9,
     };
     const text = formatToolCallHint(hint);
     expect(text).toContain("Happy Paths tip");
-    expect(text).toContain("linear_consolidation");
-    expect(text).toContain("pants run");
+    expect(text).toContain("./gravity-cli tool linear");
+    expect(text).toContain("confidence 90%");
+    expect(text).toContain("policy continua-gravity-dev-os-2026-04-27");
+    expect(text).toContain("boundary team_private trace-derived aggregate");
   });
 });

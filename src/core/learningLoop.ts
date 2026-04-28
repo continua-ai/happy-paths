@@ -208,10 +208,14 @@ function isLowSignalCommand(command: string): boolean {
   }
 
   const broadTestCommandPattern =
-    /^(?:python\s+-m\s+)?(?:pytest|npm\s+(?:run\s+)?test|pnpm\s+test|yarn\s+test|go\s+test|pants\s+test)(\s|$)/;
+    /^(?:python\s+-m\s+)?(?:pytest|npm\s+(?:run\s+)?test|pnpm\s+test|yarn\s+test|go\s+test|pants\s+test|(?:bazelisk|bazel)\s+test)(\s|$)/;
 
   if (!broadTestCommandPattern.test(normalized)) {
     return false;
+  }
+
+  if (/\s\/\/\.\.\.(\s|$)/.test(normalized)) {
+    return true;
   }
 
   const targetedMarkers = [
